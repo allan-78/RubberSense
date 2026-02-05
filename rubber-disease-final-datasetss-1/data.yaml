@@ -1,0 +1,13 @@
+train: c:\Users\allan\Documents\RubberSense\rubber-disease-final-datasetss-1\train\images
+val: c:\Users\allan\Documents\RubberSense\rubber-disease-final-datasetss-1\valid\images
+test: c:\Users\allan\Documents\RubberSense\rubber-disease-final-datasetss-1\test\images
+
+nc: 3
+names: ['Colletotrichum', 'Corynespora', 'Leaf-Blight']
+
+roboflow:
+  workspace: marv-84njs
+  project: rubber-disease-final-datasetss
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/marv-84njs/rubber-disease-final-datasetss/dataset/1

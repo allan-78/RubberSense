@@ -12,7 +12,9 @@ const CustomButton = ({
   icon, 
   loading = false, 
   disabled = false,
-  style 
+  style,
+  textStyle,
+  borderRadius
 }) => {
   
   const getColors = () => {
@@ -56,6 +58,7 @@ const CustomButton = ({
             { color: getTextColor() },
             size === 'lg' && styles.textLg,
             size === 'sm' && styles.textSm,
+            textStyle
           ]}>
             {title}
           </Text>
@@ -73,7 +76,8 @@ const CustomButton = ({
           styles.button,
           styles.outlineButton,
           { borderColor: disabled ? theme.colors.textLight : theme.colors.primary },
-          style
+          style,
+          borderRadius !== undefined && { borderRadius }
         ]}
         activeOpacity={0.8}
       >
@@ -86,7 +90,11 @@ const CustomButton = ({
     <TouchableOpacity
       onPress={onPress}
       disabled={disabled || loading}
-      style={[styles.container, style]}
+      style={[
+        styles.container, 
+        style,
+        borderRadius !== undefined && { borderRadius }
+      ]}
       activeOpacity={0.8}
     >
       <LinearGradient
@@ -96,6 +104,7 @@ const CustomButton = ({
         style={[
           styles.button,
           disabled && styles.disabled,
+          borderRadius !== undefined && { borderRadius }
         ]}
       >
         <ButtonContent />

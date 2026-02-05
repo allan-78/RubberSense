@@ -90,6 +90,17 @@ const ScanDetailScreen = ({ route, navigation }) => {
 
           <View style={styles.headerInfo}>
             <Text style={styles.treeTitle}>Tree {scan.tree?.treeID}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+              <MaterialIcons 
+                name={scan.treeIdentification?.detectedPart === 'leaf' ? 'eco' : (scan.treeIdentification?.detectedPart === 'trunk' ? 'straighten' : 'park')} 
+                size={16} 
+                color="#DDD" 
+                style={{ marginRight: 6 }}
+              />
+              <Text style={{ color: '#DDD', fontSize: 14, fontWeight: '500' }}>
+                 {scan.treeIdentification?.detectedPart ? scan.treeIdentification.detectedPart.toUpperCase().replace('_', ' ') : "TREE SCAN"}
+              </Text>
+            </View>
             <Text style={styles.scanDate}>
               {new Date(scan.createdAt).toLocaleDateString()} • {new Date(scan.createdAt).toLocaleTimeString()}
             </Text>
@@ -105,19 +116,52 @@ const ScanDetailScreen = ({ route, navigation }) => {
               value={scan.treeIdentification?.isRubberTree ? "Hevea brasiliensis" : "Unknown"} 
             />
             <DetailRow 
+              label="Detected Part" 
+              value={scan.treeIdentification?.detectedPart ? scan.treeIdentification.detectedPart.toUpperCase().replace('_', ' ') : "WHOLE TREE"} 
+            />
+            <DetailRow 
+              label="Maturity" 
+              value={scan.treeIdentification?.maturity ? scan.treeIdentification.maturity.charAt(0).toUpperCase() + scan.treeIdentification.maturity.slice(1) : "Unknown"} 
+            />
+            <DetailRow 
               label="Confidence" 
               value={`${scan.treeIdentification?.confidence}%`} 
               isLast
             />
           </InfoCard>
 
-          {/* 2. Trunk Analysis */}
-          <InfoCard title="Trunk Analysis" icon="straighten">
-            <DetailRow label="Girth" value={`${scan.trunkAnalysis?.girth} cm`} />
-            <DetailRow label="Diameter" value={`${scan.trunkAnalysis?.diameter} cm`} />
-            <DetailRow label="Bark Texture" value={scan.trunkAnalysis?.texture} />
-            <DetailRow label="Bark Color" value={scan.trunkAnalysis?.color} isLast />
-          </InfoCard>
+          {/* 2. Leaf Analysis (Conditional) */}
+          {(scan.treeIdentification?.detectedPart === 'leaf' || scan.leafAnalysis) && (
+            <InfoCard title="Leaf Analysis" icon="eco">
+              <DetailRow 
+                label="Health Status" 
+                value={scan.leafAnalysis?.healthStatus?.toUpperCase()} 
+              />
+              <DetailRow 
+                label="Color" 
+                value={scan.leafAnalysis?.color} 
+              />
+              <DetailRow 
+                label="Spot Count" 
+                value={scan.leafAnalysis?.spotCount?.toString()} 
+              />
+              <DetailRow 
+                label="Diseases" 
+                value={scan.leafAnalysis?.diseases?.length > 0 ? scan.leafAnalysis.diseases.join(', ') : 'None'} 
+                isLast
+              />
+            </InfoCard>
+          )}
+
+          {/* 3. Trunk Analysis (Conditional) */}
+          {(scan.treeIdentification?.detectedPart === 'trunk' || scan.treeIdentification?.detectedPart === 'whole_tree' || !scan.treeIdentification?.detectedPart) && (
+            <InfoCard title="Trunk Analysis" icon="straighten">
+              <DetailRow label="Girth" value={`${scan.trunkAnalysis?.girth} cm`} />
+              <DetailRow label="Diameter" value={`${scan.trunkAnalysis?.diameter} cm`} />
+              <DetailRow label="Bark Texture" value={scan.trunkAnalysis?.texture} />
+              <DetailRow label="Bark Color" value={scan.trunkAnalysis?.color} isLast />
+            </InfoCard>
+          )}
 
           {/* 3. Disease Detection */}
           <InfoCard title="Disease Detection" icon="healing">
@@ -158,26 +202,75 @@ const ScanDetailScreen = ({ route, navigation }) => {
              <Text style={styles.reasonText}>{scan.tappabilityAssessment?.reason}</Text>
           </InfoCard>
 
-          {/* 5. Latex Prediction */}
-          <InfoCard title="Latex Prediction" icon="opacity">
-            <DetailRow label="Predicted Quality" value={scan.latexQualityPrediction?.quality?.toUpperCase()} />
-            <DetailRow label="Est. Dry Rubber Content" value={`${scan.latexQualityPrediction?.dryRubberContent}%`} />
-            <DetailRow label="Est. Market Price" value={`₱${scan.latexQualityPrediction?.estimatedPrice}/kg`} isLast />
-          </InfoCard>
+          {/* 5. Latex Analysis (LIQUID SCANS ONLY) */}
+          {scan.scanType === 'latex' && (
+            <>
+              <InfoCard title="Latex Analysis" icon="opacity">
+                <DetailRow label="Quality Grade" value={scan.latexQualityPrediction?.quality?.toUpperCase()} />
+                <DetailRow label="Dry Rubber Content (DRC)" value={`${scan.latexQualityPrediction?.dryRubberContent}%`} />
+                <DetailRow label="Est. Market Price" value={`₱${scan.latexQualityPrediction?.estimatedPrice || 0}/kg`} />
+                
+                {/* Color Analysis */}
+                <DetailRow label="Color" value={scan.latexColorAnalysis?.primaryColor || 'Unknown'} />
+                
+                {/* Contamination */}
+                <DetailRow 
+                  label="Water Contamination" 
+                  value={scan.contaminationDetection?.hasWater ? "Detected" : "None"} 
+                />
+                <DetailRow 
+                  label="Contamination Level" 
+                  value={scan.contaminationDetection?.contaminationLevel?.toUpperCase() || 'NONE'} 
+                />
+                
+                {/* Quantity */}
+                <DetailRow 
+                  label="Est. Volume" 
+                  value={scan.quantityEstimation?.volume ? `${scan.quantityEstimation.volume} L` : "N/A"} 
+                />
+                
+                {/* Yield & Product Recommendation */}
+                <DetailRow 
+                  label="Est. Yield" 
+                  value={scan.productYieldEstimation?.estimatedYield ? `${scan.productYieldEstimation.estimatedYield} kg` : "N/A"} 
+                />
+                <DetailRow 
+                  label="Rec. Product" 
+                  value={scan.productYieldEstimation?.productType || "N/A"} 
+                  isLast
+                />
+              </InfoCard>
+            </>
+          )}
+
+          {/* 5b. Latex Prediction (TREE SCANS ONLY) */}
+          {scan.scanType !== 'latex' && (scan.latexQualityPrediction || scan.latexFlowIntensity) && (
+            <InfoCard title="Latex Prediction (Tree-based)" icon="opacity">
+              <DetailRow label="Predicted Quality" value={scan.latexQualityPrediction?.quality?.toUpperCase()} />
+              <DetailRow label="Predicted DRC" value={scan.latexQualityPrediction?.dryRubberContent ? `${scan.latexQualityPrediction.dryRubberContent}%` : 'N/A'} />
+              <DetailRow 
+                 label="Flow Intensity" 
+                 value={scan.latexFlowIntensity ? scan.latexFlowIntensity.toUpperCase().replace('_', ' ') : 'N/A'} 
+                 isLast
+              />
+            </InfoCard>
+          )}
 
            {/* 6. Productivity */}
-           <InfoCard title="Productivity & Recommendations" icon="trending-up">
-            <DetailRow label="Status" value={scan.productivityRecommendation?.status?.toUpperCase()} />
-            <View style={{ marginTop: 10 }}>
-              <Text style={styles.detailLabel}>Suggestions:</Text>
-              {scan.productivityRecommendation?.suggestions?.map((suggestion, index) => (
-                <View key={index} style={styles.bulletPoint}>
-                  <MaterialIcons name="chevron-right" size={16} color={theme.colors.primary} />
-                  <Text style={styles.bulletText}>{suggestion}</Text>
-                </View>
-              ))}
-            </View>
-          </InfoCard>
+           {scan.productivityRecommendation && (
+             <InfoCard title="Productivity & Recommendations" icon="trending-up">
+              <DetailRow label="Status" value={scan.productivityRecommendation?.status?.toUpperCase()} />
+              <View style={{ marginTop: 10 }}>
+                <Text style={styles.detailLabel}>Suggestions:</Text>
+                {scan.productivityRecommendation?.suggestions?.map((suggestion, index) => (
+                  <View key={index} style={styles.bulletPoint}>
+                    <MaterialIcons name="chevron-right" size={16} color={theme.colors.primary} />
+                    <Text style={styles.bulletText}>{suggestion}</Text>
+                  </View>
+                ))}
+              </View>
+            </InfoCard>
+           )}
 
         </View>
       </ScrollView>

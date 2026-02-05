@@ -17,45 +17,117 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [hasSeenOnboarding, setHasSeenOnboarding] = useState(false);
 
   useEffect(() => {
     checkAuth();
+    checkOnboarding();
   }, []);
+
+  const checkOnboarding = async () => {
+    try {
+      const value = await AsyncStorage.getItem('hasSeenOnboarding');
+      if (value === 'true') {
+        setHasSeenOnboarding(true);
+      }
+    } catch (error) {
+      console.log('Error checking onboarding status:', error);
+    }
+  };
+
+  const completeOnboarding = async () => {
+    try {
+      await AsyncStorage.setItem('hasSeenOnboarding', 'true');
+      setHasSeenOnboarding(true);
+    } catch (error) {
+      console.log('Error saving onboarding status:', error);
+    }
+  };
+
+  const resetOnboarding = async () => {
+    try {
+      await AsyncStorage.removeItem('hasSeenOnboarding');
+      setHasSeenOnboarding(false);
+    } catch (error) {
+      console.log('Error resetting onboarding status:', error);
+    }
+  };
 
   // Refresh user data from backend
   const refreshUser = async () => {
     try {
       const token = await AsyncStorage.getItem('token');
-      if (!token) return;
+      if (!token) return null;
 
       const response = await authAPI.getMe();
-      const userData = response.data || response;
+      const userData = response?.data?.user;
       
       if (userData) {
         await AsyncStorage.setItem('user', JSON.stringify(userData));
         setUser(userData);
+        return userData;
       }
+      return null;
     } catch (error) {
       console.log('Refresh user error:', error);
+      return null;
     }
+  };
+
+  const updateFollowingOptimistic = async (targetUser, isNowFollowing) => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const existing = Array.isArray(prev.following) ? prev.following : [];
+      let updatedFollowing;
+      if (isNowFollowing) {
+        const exists = existing.some(u => String((u && u._id) || u) === String(targetUser._id));
+        if (!exists) {
+          const minimal = { _id: targetUser._id, name: targetUser.name, profileImage: targetUser.profileImage };
+          updatedFollowing = [...existing, minimal];
+        } else {
+          updatedFollowing = existing;
+        }
+      } else {
+        updatedFollowing = existing.filter(u => String((u && u._id) || u) !== String(targetUser._id));
+      }
+      const updated = {
+        ...prev,
+        following: updatedFollowing,
+        followingCount: updatedFollowing.length,
+        followingIds: updatedFollowing.map(u => (u && u._id) ? u._id : u)
+      };
+      AsyncStorage.setItem('user', JSON.stringify(updated));
+      return updated;
+    });
   };
 
   // Check if user is logged in
   const checkAuth = async () => {
     try {
-      // Clear any existing session on app start to force login
-      await AsyncStorage.removeItem('token');
-      await AsyncStorage.removeItem('user');
-      setUser(null);
+      const token = await AsyncStorage.getItem('token');
+      const userData = await AsyncStorage.getItem('user');
       
-      // const token = await AsyncStorage.getItem('token');
-      // const userData = await AsyncStorage.getItem('user');
-      
-      // if (token && userData) {
-      //   setUser(JSON.parse(userData));
-      //   // Verify token validity and get fresh user data
-      //   refreshUser();
-      // }
+      if (token) {
+        try {
+          const res = await authAPI.refresh();
+          const { token: newToken, user: refreshedUser } = res.data || res;
+          if (newToken) {
+            await AsyncStorage.setItem('token', newToken);
+          }
+          if (refreshedUser) {
+            await AsyncStorage.setItem('user', JSON.stringify(refreshedUser));
+            setUser(refreshedUser);
+          } else if (userData) {
+            setUser(JSON.parse(userData));
+          }
+        } catch (e) {
+          await AsyncStorage.removeItem('token');
+          await AsyncStorage.removeItem('user');
+          setUser(null);
+        }
+      } else if (userData) {
+        setUser(JSON.parse(userData));
+      }
     } catch (error) {
       console.log('Auth check error:', error);
     } finally {
@@ -74,8 +146,7 @@ export const AuthProvider = ({ children }) => {
       if (token) {
         // Only save token for API calls in current session
         await AsyncStorage.setItem('token', token);
-        // Do NOT save user data persistently to ensure fresh login on restart
-        // await AsyncStorage.setItem('user', JSON.stringify(userData));
+        await AsyncStorage.setItem('user', JSON.stringify(userData));
         setUser(userData);
         return { success: true };
       } else {
@@ -170,6 +241,20 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Forgot Password
+  const forgotPassword = async (email) => {
+    try {
+      await authAPI.forgotPassword(email);
+      return { success: true };
+    } catch (error) {
+      console.log('Forgot password error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || error.message || 'Failed to send reset email',
+      };
+    }
+  };
+
   const value = {
     user,
     loading,
@@ -179,6 +264,11 @@ export const AuthProvider = ({ children }) => {
     resendVerificationEmail,
     isAuthenticated: !!user,
     refreshUser,
+    updateFollowingOptimistic,
+    hasSeenOnboarding,
+    completeOnboarding,
+    resetOnboarding,
+    forgotPassword,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

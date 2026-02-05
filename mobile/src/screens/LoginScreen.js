@@ -2,7 +2,7 @@
 // 🔑 Enhanced Login Screen
 // ============================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,18 +12,64 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Animated,
+  LayoutAnimation,
+  UIManager,
+  Dimensions,
+  TouchableOpacity,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../context/AuthContext';
+import { Ionicons } from '@expo/vector-icons';
 import theme from '../styles/theme';
 import CustomButton from '../components/CustomButton';
 import CustomInput from '../components/CustomInput';
 
-const LoginScreen = () => {
-  const { login, register } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
+// Enable LayoutAnimation for Android
+// if (Platform.OS === 'android') {
+//   if (UIManager.setLayoutAnimationEnabledExperimental) {
+//     UIManager.setLayoutAnimationEnabledExperimental(true);
+//   }
+// }
+
+const { width, height } = Dimensions.get('window');
+
+const LoginScreen = ({ route }) => {
+  const { login, register, resetOnboarding, forgotPassword } = useAuth();
+  // Default to login unless isRegister param is true
+  const initialMode = route?.params?.isRegister ? false : true;
+  const [isLogin, setIsLogin] = useState(initialMode);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Animations
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(50)).current;
+  const logoScale = useRef(new Animated.Value(0.8)).current;
+  // const scrollY = useRef(new Animated.Value(0)).current; // Removed scroll-driven animation
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        tension: 20,
+        friction: 7,
+        useNativeDriver: true,
+      }),
+      Animated.spring(logoScale, {
+        toValue: 1,
+        tension: 10,
+        friction: 5,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
 
   // Form fields
   const [name, setName] = useState('');
@@ -77,7 +123,7 @@ const LoginScreen = () => {
 
     if (result.success) {
       Alert.alert(
-        'Registration Successful! 🎉',
+        'Registration Successful',
         'Account created successfully. You are now logged in.',
         [{ text: 'OK' }]
       );
@@ -86,7 +132,41 @@ const LoginScreen = () => {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!email) {
+      Alert.alert('Error', 'Please enter your email address');
+      return;
+    }
+    
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    setLoading(true);
+    const result = await forgotPassword(email);
+    setLoading(false);
+
+    if (result.success) {
+      Alert.alert(
+        'Email Sent',
+        'Please check your email for the password reset link.',
+        [{ text: 'OK', onPress: () => toggleForgotPassword() }]
+      );
+    } else {
+      Alert.alert('Error', result.error);
+    }
+  };
+
+  const toggleForgotPassword = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setIsForgotPassword(!isForgotPassword);
+  };
+
   const toggleMode = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setIsLogin(!isLogin);
     setName('');
     setEmail('');
@@ -95,216 +175,365 @@ const LoginScreen = () => {
     setPhoneNumber('');
   };
 
+  // Scroll Animations (Removed for stability)
+  // const headerOpacity = scrollY.interpolate({ ... });
+  // const headerTranslateY = scrollY.interpolate({ ... });
+  // const logoTranslateY = scrollY.interpolate({ ... });
+  // const sheetTranslateY = scrollY.interpolate({ ... });
+
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={styles.container}>
       <StatusBar style="light" />
       
-      {/* Background Gradient */}
+      {/* Background Gradient & Header */}
       <LinearGradient
         colors={theme.gradients.primary}
-        style={styles.background}
-      />
-
-      <ScrollView 
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+        style={styles.headerContainer}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
       >
-        {/* Header Section */}
-        <View style={styles.header}>
-          <View style={styles.logoContainer}>
-            <Text style={styles.logo}>🌳</Text>
-          </View>
+        <Animated.View 
+          style={[
+            styles.logoContainer,
+            { 
+              transform: [
+                { scale: logoScale },
+                // { translateY: logoTranslateY }
+              ] 
+            }
+          ]}
+        >
+          <Ionicons name="leaf" size={48} color="#FFF" />
+        </Animated.View>
+        
+        <Animated.View 
+          style={{ 
+            opacity: fadeAnim, // Removed headerOpacity
+            alignItems: 'center',
+            // transform: [{ translateY: headerTranslateY }]
+          }}
+        >
           <Text style={styles.title}>RubberSense</Text>
           <Text style={styles.subtitle}>
-            {isLogin ? 'Welcome back, farmer!' : 'Join the community'}
+            {isLogin ? 'Welcome back, farmer!' : 'Join our community'}
           </Text>
-        </View>
+        </Animated.View>
+        
+        {/* Abstract shapes in background */}
+        <View style={styles.bgCircle1} />
+        <View style={styles.bgCircle2} />
+      </LinearGradient>
 
-        {/* Form Card */}
-        <View style={styles.card}>
-          <View style={styles.formHeader}>
-            <Text style={styles.formTitle}>
-              {isLogin ? 'Login to your account' : 'Create an account'}
-            </Text>
+      {/* Bottom Form Sheet */}
+      <Animated.View 
+        style={[
+          styles.formSheetWrapper,
+          { 
+            opacity: fadeAnim,
+            transform: [
+              { translateY: slideAnim } // Removed sheetTranslateY
+            ]
+          }
+        ]}
+      >
+        <KeyboardAvoidingView
+          style={styles.formSheet}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.sheetContent}>
+            <ScrollView 
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              // Removed onScroll event
+            >
+              <Text style={styles.formTitle}>
+                {isForgotPassword ? 'Reset Password' : (isLogin ? 'Login' : 'Sign Up')}
+              </Text>
+            
+            <View style={styles.form}>
+              {isForgotPassword ? (
+                <>
+                  <Text style={{marginBottom: 20, color: theme.colors.textSecondary, fontSize: 16}}>
+                    Enter your email address and we'll send you a link to reset your password.
+                  </Text>
+                  
+                  <CustomInput
+                    label="Email Address"
+                    placeholder="your@email.com"
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    icon="mail-outline"
+                    editable={!loading}
+                    autoCapitalize="none"
+                  />
+
+                  <CustomButton
+                    title="Send Reset Link"
+                    onPress={handleForgotPassword}
+                    loading={loading}
+                    style={styles.submitButton}
+                    borderRadius={16}
+                  />
+
+                  <CustomButton
+                    title="Back to Login"
+                    variant="outline"
+                    onPress={toggleForgotPassword}
+                    style={{marginTop: 10, borderWidth: 0}}
+                    textStyle={{color: theme.colors.textSecondary}}
+                  />
+                </>
+              ) : (
+                <>
+                  {!isLogin && (
+                    <CustomInput
+                      label="Full Name"
+                      placeholder="John Doe"
+                      value={name}
+                      onChangeText={setName}
+                      icon="person-outline"
+                      editable={!loading}
+                      autoCapitalize="words"
+                    />
+                  )}
+
+                  <CustomInput
+                    label="Email Address"
+                    placeholder="your@email.com"
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    icon="mail-outline"
+                    editable={!loading}
+                    autoCapitalize="none"
+                  />
+
+                  {!isLogin && (
+                    <CustomInput
+                      label="Phone Number"
+                      placeholder="+63 912 345 6789"
+                      value={phoneNumber}
+                      onChangeText={setPhoneNumber}
+                      keyboardType="phone-pad"
+                      icon="call-outline"
+                      editable={!loading}
+                    />
+                  )}
+
+                  <CustomInput
+                     label="Password"
+                     placeholder="Enter password"
+                     value={password}
+                     onChangeText={setPassword}
+                     secureTextEntry
+                     icon="lock-closed-outline"
+                     editable={!loading}
+                   />
+
+                  {!isLogin && (
+                    <CustomInput
+                      label="Confirm Password"
+                      placeholder="Confirm password"
+                      value={confirmPassword}
+                      onChangeText={setConfirmPassword}
+                      secureTextEntry
+                      icon="lock-closed-outline"
+                      editable={!loading}
+                    />
+                  )}
+
+                  {isLogin && (
+                    <View style={styles.forgotContainer}>
+                      <CustomButton
+                        title="Forgot Password?"
+                        variant="outline"
+                        onPress={toggleForgotPassword}
+                        style={styles.forgotButton}
+                        textStyle={styles.forgotText}
+                        size="sm"
+                      />
+                    </View>
+                  )}
+
+                  <CustomButton
+                    title={isLogin ? 'Login' : 'Create Account'}
+                    onPress={isLogin ? handleLogin : handleRegister}
+                    loading={loading}
+                    style={styles.submitButton}
+                    borderRadius={16}
+                  />
+                </>
+              )}
+            </View>
+
+            {/* Footer */}
+            {!isForgotPassword && (
+              <View style={styles.footer}>
+                <Text style={styles.footerText}>
+                  {isLogin ? "Don't have an account? " : "Already have an account? "}
+                </Text>
+                <CustomButton
+                  title={isLogin ? 'Sign Up' : 'Login'}
+                  variant="outline"
+                  onPress={toggleMode}
+                  size="sm"
+                  style={styles.switchButton}
+                  textStyle={styles.switchText}
+                />
+              </View>
+            )}
+
+            {/* Dev Helper: Reset Onboarding */}
+            <TouchableOpacity 
+              onPress={() => {
+                resetOnboarding();
+                // Optional: Alert to confirm
+                // Alert.alert("Reset", "Onboarding reset. Restart app to see it.");
+              }}
+              style={{ alignItems: 'center', marginTop: 10, opacity: 0.5 }}
+            >
+              <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
+                Tap here to see Onboarding again
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
           </View>
-
-          <View style={styles.form}>
-            {!isLogin && (
-              <CustomInput
-                label="Full Name"
-                placeholder="John Doe"
-                value={name}
-                onChangeText={setName}
-                icon="person-outline"
-                editable={!loading}
-                autoCapitalize="words"
-              />
-            )}
-
-            <CustomInput
-              label="Email Address"
-              placeholder="your@email.com"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              icon="mail-outline"
-              editable={!loading}
-              autoCapitalize="none"
-            />
-
-            {!isLogin && (
-              <CustomInput
-                label="Phone Number"
-                placeholder="+63 912 345 6789"
-                value={phoneNumber}
-                onChangeText={setPhoneNumber}
-                keyboardType="phone-pad"
-                icon="call-outline"
-                editable={!loading}
-              />
-            )}
-
-            <CustomInput
-              label="Password"
-              placeholder="Enter password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              icon="lock-closed-outline"
-              editable={!loading}
-            />
-
-            {!isLogin && (
-              <CustomInput
-                label="Confirm Password"
-                placeholder="Confirm password"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-                icon="lock-closed-outline"
-                editable={!loading}
-              />
-            )}
-
-            <CustomButton
-              title={isLogin ? 'Login' : 'Create Account'}
-              onPress={isLogin ? handleLogin : handleRegister}
-              loading={loading}
-              style={styles.submitButton}
-            />
-
-            {isLogin && (
-              <CustomButton
-                title="Forgot Password?"
-                variant="outline"
-                onPress={() => {}}
-                style={styles.forgotButton}
-                size="sm"
-              />
-            )}
-          </View>
-        </View>
-
-        {/* Footer */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            {isLogin ? "Don't have an account? " : "Already have an account? "}
-          </Text>
-          <CustomButton
-            title={isLogin ? 'Sign Up' : 'Login'}
-            variant="outline"
-            onPress={toggleMode}
-            size="sm"
-            style={styles.switchButton}
-          />
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </Animated.View>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.primary, // Fallback
   },
-  background: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    height: '45%',
-    borderBottomLeftRadius: 40,
-    borderBottomRightRadius: 40,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: theme.spacing.lg,
-    paddingTop: theme.spacing.xxxl,
-  },
-  header: {
+  headerContainer: {
+    height: height * 0.4, // Fixed height instead of flex
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: theme.spacing.xl,
+    paddingBottom: 40,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  bgCircle1: {
+    position: 'absolute',
+    top: -50,
+    right: -50,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  bgCircle2: {
+    position: 'absolute',
+    bottom: 50,
+    left: -80,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
   logoContainer: {
-    width: 100,
-    height: 100,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: theme.borderRadius.full,
+    width: 80,
+    height: 80,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: theme.spacing.md,
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    ...theme.shadows.md,
+    backdropFilter: 'blur(10px)', // Works on web, ignored on native but good for intent
   },
   logo: {
-    fontSize: 50,
+    // Removed
   },
   title: {
-    fontSize: theme.fontSize.xxl,
-    fontWeight: theme.fontWeight.bold,
+    fontSize: 32,
+    fontWeight: '800',
     color: '#FFFFFF',
     marginBottom: theme.spacing.xs,
+    letterSpacing: -0.5,
+    textShadowColor: 'rgba(0, 0, 0, 0.1)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
   subtitle: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.md,
     color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '500',
   },
-  card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.xl,
-    padding: theme.spacing.xl,
+  
+  // Form Sheet
+  formSheetWrapper: {
+    flex: 1, // Changed from fixed height to flex
+    marginTop: -30,
+    zIndex: 10,
+    width: '100%', // Ensure full width
+  },
+  formSheet: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    overflow: 'hidden',
     ...theme.shadows.lg,
-    marginBottom: theme.spacing.lg,
+    elevation: 10, // Stronger shadow for Android
   },
-  formHeader: {
-    marginBottom: theme.spacing.lg,
+  sheetContent: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  scrollContent: {
+    padding: theme.spacing.xl,
+    paddingTop: theme.spacing.xl,
+    paddingBottom: 150, // Increased to ensure scrollability for header animation
   },
   formTitle: {
-    fontSize: theme.fontSize.xl,
-    fontWeight: theme.fontWeight.bold,
+    fontSize: 28, // Larger title
+    fontWeight: '800',
     color: theme.colors.text,
+    marginBottom: theme.spacing.lg,
+    letterSpacing: -0.5,
   },
   form: {
     gap: theme.spacing.sm,
   },
-  submitButton: {
-    marginTop: theme.spacing.md,
+  
+  // Buttons & Inputs
+  forgotContainer: {
+    alignItems: 'flex-end',
+    marginBottom: theme.spacing.sm,
   },
   forgotButton: {
-    marginTop: theme.spacing.sm,
     borderWidth: 0,
+    paddingHorizontal: 0,
+    minHeight: 0,
+    paddingVertical: 4,
   },
+  forgotText: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.sm,
+    fontWeight: '600',
+  },
+  submitButton: {
+    marginTop: theme.spacing.sm,
+    borderRadius: 16,
+    height: 56,
+  },
+  
+  // Footer
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: theme.spacing.sm,
-    marginBottom: theme.spacing.xl,
+    marginTop: theme.spacing.xl,
+    marginBottom: theme.spacing.lg,
   },
   footerText: {
     color: theme.colors.textSecondary,
@@ -312,9 +541,14 @@ const styles = StyleSheet.create({
   },
   switchButton: {
     borderWidth: 0,
-    paddingHorizontal: theme.spacing.xs,
+    paddingHorizontal: 4,
     paddingVertical: 0,
     minHeight: 0,
+  },
+  switchText: {
+    color: theme.colors.primary,
+    fontWeight: '700',
+    fontSize: theme.fontSize.md,
   }
 });
 

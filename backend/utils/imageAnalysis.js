@@ -8,16 +8,20 @@ const path = require('path');
  * Executes the Python AI script to analyze images
  * @param {string} mode - 'tree' or 'latex'
  * @param {string} imageUrl - The URL of the image to analyze
+ * @param {string} [subMode] - Optional sub-mode (e.g., 'trunk', 'leaf')
  * @returns {Promise<Object>} - The analysis results
  */
-const runPythonScript = (mode, imageUrl) => {
+const runPythonScript = (mode, imageUrl, subMode = '') => {
   return new Promise((resolve, reject) => {
     // Path to the Python script
     const scriptPath = path.join(__dirname, '../ai_service/main.py');
     
     // Spawn Python process
     // Note: Requires 'python' to be in the system PATH
-    const pythonProcess = spawn('python', [scriptPath, mode, imageUrl]);
+    const args = [scriptPath, mode, imageUrl];
+    if (subMode) args.push(subMode);
+    
+    const pythonProcess = spawn('python', args);
 
     let dataString = '';
     let errorString = '';
@@ -45,9 +49,15 @@ const runPythonScript = (mode, imageUrl) => {
 
         try {
           const result = JSON.parse(dataString);
+          
+          // If Python returns an explicit error (e.g. "Not a tree"), pass it through
+          // Do NOT fall back to mock data for validation errors
           if (result.error) {
-            throw new Error(result.error);
+             console.warn(`⚠️ [Python ML] Validation error: ${result.error}`);
+             resolve(result); // Resolve with the error object
+             return;
           }
+
           console.log(`✅ [Python ML] Analysis successful for ${mode}`);
           resolve(result);
         } catch (error) {
@@ -62,8 +72,8 @@ const runPythonScript = (mode, imageUrl) => {
   });
 };
 
-const analyzeTreeImage = async (imageUrl) => {
-  return await runPythonScript('tree', imageUrl);
+const analyzeTreeImage = async (imageUrl, subMode) => {
+  return await runPythonScript('tree', imageUrl, subMode);
 };
 
 const analyzeLatexImage = async (imageUrl) => {
@@ -74,13 +84,31 @@ const analyzeLatexImage = async (imageUrl) => {
 // MOCK DATA FALLBACKS
 // ==========================================
 const getMockTreeData = () => ({
-  treeIdentification: { isRubberTree: true, confidence: 92.5 },
-  trunkAnalysis: { girth: 85.3, diameter: 27.1, texture: 'smooth', color: 'dark_brown' },
+  treeIdentification: { 
+    isRubberTree: true, 
+    confidence: 92.5,
+    maturity: 'mature',
+    detectedPart: 'whole_tree'
+  },
+  trunkAnalysis: { 
+    girth: 85.3, 
+    diameter: 27.1, 
+    texture: 'smooth', 
+    color: 'dark_brown',
+    healthStatus: 'healthy',
+    damages: []
+  },
+  leafAnalysis: {
+    healthStatus: 'healthy',
+    color: 'green',
+    spotCount: 0,
+    diseases: []
+  },
   diseaseDetection: [{ name: 'No disease detected', confidence: 95.2, severity: 'none', recommendation: 'Tree appears healthy.' }],
   tappabilityAssessment: { isTappable: true, score: 88, reason: 'Tree meets diameter requirements.' },
-  latexQualityPrediction: { quality: 'good', dryRubberContent: 32.5, estimatedPrice: 85.0 },
-  latexFlowIntensity: 'medium',
-  productivityRecommendation: { status: 'optimal', suggestions: ['Maintain regular tapping schedule'] }
+  latexQualityPrediction: null,
+  latexFlowIntensity: null,
+  productivityRecommendation: null
 });
 
 const getMockLatexData = () => ({

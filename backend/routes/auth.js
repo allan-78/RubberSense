@@ -92,6 +92,8 @@ router.post('/register', async (req, res) => {
           location: user.location,
           isVerified: user.isVerified,
           profileImage: user.profileImage,
+          followers: user.followers,
+          following: user.following,
           createdAt: user.createdAt
         }
       }
@@ -184,6 +186,8 @@ router.post('/login', async (req, res) => {
           location: user.location,
           isVerified: user.isVerified,
           profileImage: user.profileImage,
+          followers: user.followers,
+          following: user.following,
           createdAt: user.createdAt
         }
       }
@@ -321,7 +325,9 @@ router.post('/resend-verification', async (req, res) => {
 // ============================================
 router.get('/me', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id)
+      .populate('followers', 'name profileImage')
+      .populate('following', 'name profileImage');
 
     if (!user) {
       return res.status(404).json({
@@ -342,6 +348,12 @@ router.get('/me', protect, async (req, res) => {
           location: user.location,
           isVerified: user.isVerified,
           profileImage: user.profileImage,
+          followers: user.followers,
+          following: user.following,
+          followersCount: Array.isArray(user.followers) ? user.followers.length : 0,
+          followingCount: Array.isArray(user.following) ? user.following.length : 0,
+          followersIds: Array.isArray(user.followers) ? user.followers.map(u => u._id || u) : [],
+          followingIds: Array.isArray(user.following) ? user.following.map(u => u._id || u) : [],
           createdAt: user.createdAt
         }
       }
@@ -354,6 +366,256 @@ router.get('/me', protect, async (req, res) => {
       error: 'Server error fetching user data'
     });
   }
+});
+
+// ============================================
+// @route   POST /api/auth/refresh
+// @desc    Refresh JWT token
+// @access  Private
+// ============================================
+router.post('/refresh', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+      .populate('followers', 'name profileImage')
+      .populate('following', 'name profileImage');
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        token,
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phoneNumber: user.phoneNumber,
+          location: user.location,
+          isVerified: user.isVerified,
+          profileImage: user.profileImage,
+          followers: user.followers,
+          following: user.following,
+          followersCount: Array.isArray(user.followers) ? user.followers.length : 0,
+          followingCount: Array.isArray(user.following) ? user.following.length : 0,
+          followersIds: Array.isArray(user.followers) ? user.followers.map(u => u._id || u) : [],
+          followingIds: Array.isArray(user.following) ? user.following.map(u => u._id || u) : [],
+          createdAt: user.createdAt
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Server error refreshing token'
+    });
+  }
+});
+// ============================================
+// @route   POST /api/auth/forgot-password
+// @desc    Forgot password
+// @access  Public
+// ============================================
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const user = await User.findOne({ email: req.body.email });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'There is no user with that email'
+      });
+    }
+
+    // Get reset token
+    const resetToken = user.getResetPasswordToken();
+
+    await user.save({ validateBeforeSave: false });
+
+    // Create reset url
+    const host = process.env.SERVER_URL 
+      ? process.env.SERVER_URL.replace('http://', '').replace('https://', '') 
+      : req.get('host');
+    
+    const resetUrl = `${req.protocol}://${host}/api/auth/reset-password-page/${resetToken}`;
+
+    const message = `
+      <h1>Password Reset Request</h1>
+      <p>You are receiving this email because you (or someone else) has requested the reset of a password.</p>
+      <p>Please click the link below to reset your password:</p>
+      <a href="${resetUrl}" clicktracking=off>${resetUrl}</a>
+      <p>If you didn't request this, please ignore this email.</p>
+    `;
+
+    try {
+      await sendEmail({
+        email: user.email,
+        subject: 'RubberSense - Password Reset Token',
+        message
+      });
+
+      res.status(200).json({
+        success: true,
+        data: 'Email sent'
+      });
+    } catch (err) {
+      console.log(err);
+      user.resetPasswordToken = undefined;
+      user.resetPasswordExpire = undefined;
+
+      await user.save({ validateBeforeSave: false });
+
+      return res.status(500).json({
+        success: false,
+        error: 'Email could not be sent'
+      });
+    }
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      error: 'Server Error'
+    });
+  }
+});
+
+// ============================================
+// @route   PUT /api/auth/reset-password/:resettoken
+// @desc    Reset password
+// @access  Public
+// ============================================
+router.put('/reset-password/:resettoken', async (req, res) => {
+  try {
+    // Get hashed token
+    const resetPasswordToken = crypto
+      .createHash('sha256')
+      .update(req.params.resettoken)
+      .digest('hex');
+
+    const user = await User.findOne({
+      resetPasswordToken,
+      resetPasswordExpire: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid token or token expired'
+      });
+    }
+
+    // Set new password
+    user.password = req.body.password;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+
+    await user.save();
+
+    const token = generateToken(user._id);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        token,
+        user: {
+            id: user._id,
+            name: user.name,
+            email: user.email,
+            role: user.role
+        }
+      }
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      error: 'Server Error'
+    });
+  }
+});
+
+// ============================================
+// @route   GET /api/auth/reset-password-page/:resettoken
+// @desc    Serve HTML page for password reset
+// @access  Public
+// ============================================
+router.get('/reset-password-page/:resettoken', (req, res) => {
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Reset Password</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+          .card { background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+          h2 { text-align: center; color: #333; margin-bottom: 1.5rem; }
+          input { width: 100%; padding: 0.75rem; margin-bottom: 1rem; border: 1px solid #ccc; border-radius: 0.5rem; box-sizing: border-box; font-size: 1rem; }
+          button { width: 100%; padding: 0.75rem; background-color: #10B981; color: white; border: none; border-radius: 0.5rem; font-size: 1rem; cursor: pointer; transition: background 0.3s; }
+          button:hover { background-color: #059669; }
+          .message { text-align: center; margin-top: 1rem; font-size: 0.9rem; }
+          .success { color: #10B981; }
+          .error { color: #EF4444; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>Reset Password</h2>
+          <form id="resetForm">
+            <input type="password" id="password" placeholder="New Password" required minlength="6">
+            <input type="password" id="confirmPassword" placeholder="Confirm Password" required minlength="6">
+            <button type="submit">Reset Password</button>
+            <div id="message" class="message"></div>
+          </form>
+        </div>
+        <script>
+          const form = document.getElementById('resetForm');
+          const messageDiv = document.getElementById('message');
+          const token = '${req.params.resettoken}';
+
+          form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            if (password !== confirmPassword) {
+              messageDiv.textContent = 'Passwords do not match';
+              messageDiv.className = 'message error';
+              return;
+            }
+
+            try {
+              const res = await fetch('/api/auth/reset-password/' + token, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+              });
+              const data = await res.json();
+
+              if (data.success) {
+                messageDiv.textContent = 'Email password reset successfully';
+                messageDiv.className = 'message success';
+                form.style.display = 'none';
+              } else {
+                messageDiv.textContent = data.error || 'Something went wrong';
+                messageDiv.className = 'message error';
+              }
+            } catch (err) {
+              messageDiv.textContent = 'Network error';
+              messageDiv.className = 'message error';
+            }
+          });
+        </script>
+      </body>
+      </html>
+    `);
 });
 
 module.exports = router;

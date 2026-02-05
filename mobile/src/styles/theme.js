@@ -4,48 +4,49 @@
 
 export const theme = {
   colors: {
-    // Primary Brand Colors
-    primary: '#059669', // Emerald 600
-    primaryDark: '#047857', // Emerald 700
-    primaryLight: '#34D399', // Emerald 400
-    secondary: '#10B981', // Emerald 500
-    accent: '#F59E0B', // Amber 500
+    // Primary Brand Colors (Olive Palette)
+    primary: '#556B2F', // Dark Olive Green
+    primaryDark: '#3B4B21', // Deep Olive
+    primaryLight: '#6B8E23', // Olive Drab
+    secondary: '#8FBC8F', // Dark Sea Green
+    accent: '#BDB76B', // Dark Khaki
 
     // Backgrounds
-    background: '#F0FDF4', // Light Mint
+    background: '#FAFAF5', // Off-white/Ivory with subtle olive tint
     surface: '#FFFFFF',
-    surfaceHighlight: '#F8FAFC',
+    surfaceHighlight: '#F7F9F0',
     
     // Text
-    text: '#1E293B', // Slate 800
-    textSecondary: '#64748B', // Slate 500
-    textLight: '#94A3B8', // Slate 400
+    text: '#2F3320', // Very Dark Olive/Black
+    textSecondary: '#5C6150', // Muted Olive Gray
+    textLight: '#8C9180', // Light Olive Gray
     textInverse: '#FFFFFF',
     
     // Status
-    success: '#10B981',
-    warning: '#F59E0B',
-    error: '#EF4444',
-    info: '#3B82F6',
+    success: '#6B8E23', // Olive Drab
+    warning: '#BDB76B', // Dark Khaki
+    error: '#8B4513', // Saddle Brown (from palette)
+    info: '#8FBC8F', // Dark Sea Green
     
     // UI Elements
-    border: '#E2E8F0',
-    borderLight: '#F1F5F9',
-    inputBg: '#F8FAFC',
+    border: '#E2E8D5', // Beige/Olive tint border
+    borderLight: '#F1F5E9',
+    inputBg: '#F7F9F0',
     
     // Overlay & Glass
-    overlay: 'rgba(0, 0, 0, 0.5)',
-    overlayDark: 'rgba(0, 0, 0, 0.7)',
+    overlay: 'rgba(47, 51, 32, 0.6)', // Dark Olive overlay
+    overlayDark: 'rgba(20, 26, 10, 0.8)',
     glass: 'rgba(255, 255, 255, 0.85)',
     glassBorder: 'rgba(255, 255, 255, 0.5)',
   },
   
   gradients: {
-    primary: ['#059669', '#10B981'], // Deep Emerald to Emerald
-    success: ['#059669', '#34D399'],
-    dark: ['#0F172A', '#1E293B'],
-    light: ['#FFFFFF', '#F0FDF4'],
-    card: ['#FFFFFF', '#F8FAFC'],
+    primary: ['#556B2F', '#6B8E23'], // Dark Olive to Olive Drab
+    secondary: ['#6B8E23', '#8FBC8F'], // Olive Drab to Sea Green
+    success: ['#556B2F', '#8FBC8F'],
+    dark: ['#2F3320', '#3B4B21'],
+    light: ['#FFFFFF', '#FAFAF5'],
+    card: ['#FFFFFF', '#F7F9F0'],
   },
   
   spacing: {
@@ -86,28 +87,28 @@ export const theme = {
   
   shadows: {
     sm: {
-      shadowColor: '#059669',
+      shadowColor: '#556B2F',
       shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.05,
       shadowRadius: 4,
       elevation: 2,
     },
     md: {
-      shadowColor: '#059669',
+      shadowColor: '#556B2F',
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.1,
       shadowRadius: 8,
       elevation: 4,
     },
     lg: {
-      shadowColor: '#059669',
+      shadowColor: '#556B2F',
       shadowOffset: { width: 0, height: 10 },
       shadowOpacity: 0.15,
       shadowRadius: 16,
       elevation: 8,
     },
     glow: {
-      shadowColor: '#10B981',
+      shadowColor: '#6B8E23',
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity: 0.3,
       shadowRadius: 12,

@@ -68,7 +68,7 @@ const LatexDetailScreen = ({ route, navigation }) => {
             <Text style={styles.batchBadgeText}>{batch.batchID}</Text>
           </View>
           <Text style={styles.dateText}>
-            {new Date(batch.collectionDate).toLocaleDateString()}
+            {new Date(batch.collectionDate || batch.createdAt).toLocaleDateString()}
           </Text>
         </View>
       </View>
@@ -86,7 +86,7 @@ const LatexDetailScreen = ({ route, navigation }) => {
               {batch.qualityClassification?.grade || '?'}
             </Text>
             <Text style={styles.confidenceText}>
-              {batch.qualityClassification?.confidence ? `${Math.round(batch.qualityClassification.confidence * 100)}% Confidence` : 'Analyzing...'}
+              {batch.qualityClassification?.confidence ? `${batch.qualityClassification.confidence}% Confidence` : 'Analyzing...'}
             </Text>
           </View>
           <Text style={styles.gradeDescription}>

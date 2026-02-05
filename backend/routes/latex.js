@@ -38,17 +38,27 @@ router.post('/batch', protect, upload.single('image'), async (req, res) => {
       });
     }
 
-    // Check if batch ID already exists for this user
-    const existingBatch = await LatexBatch.findOne({
-      user: req.user.id,
-      batchID
-    });
+    // Check if batch ID already exists (Globally, not just for user)
+    let finalBatchID = batchID;
+    let attempts = 0;
+    const maxAttempts = 5;
 
-    if (existingBatch) {
-      fs.unlinkSync(req.file.path);
-      return res.status(400).json({
+    while (attempts < maxAttempts) {
+      const exists = await LatexBatch.exists({ batchID: finalBatchID });
+      if (!exists) break;
+
+      // If exists, append a random suffix to make it unique
+      const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+      // If batchID already has a suffix pattern (e.g. ID-XXXX), replace it or append?
+      // Simple approach: just append
+      finalBatchID = `${batchID}-${randomSuffix}`;
+      attempts++;
+    }
+
+    if (attempts === maxAttempts) {
+       return res.status(400).json({
         success: false,
-        error: 'Batch ID already exists'
+        error: 'Unable to generate unique Batch ID. Please try again.'
       });
     }
 
@@ -71,7 +81,7 @@ router.post('/batch', protect, upload.single('image'), async (req, res) => {
     // Create latex batch
     const latexBatch = await LatexBatch.create({
       user: req.user.id,
-      batchID,
+      batchID: finalBatchID,
       collectionDate: collectionDate || Date.now(),
       imageURL: uploadResult.url,
       cloudinaryID: uploadResult.publicId,
@@ -117,7 +127,6 @@ router.get('/', protect, async (req, res) => {
     const { limit = 20, page = 1 } = req.query; // Reduced default limit from 50 to 20
 
     const batches = await LatexBatch.find({ user: req.user.id })
-      .select('batchID imageURL qualityClassification quantityEstimation createdAt marketPriceEstimation') // Select only list view fields
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip((parseInt(page) - 1) * parseInt(limit))

@@ -2,7 +2,7 @@
 // Scan History Screen
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,13 +13,16 @@ import {
   RefreshControl,
   ActivityIndicator,
   ScrollView,
+  Platform,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { scanAPI, latexAPI } from '../services/api';
 import theme from '../styles/theme';
 
-const HistoryScreen = ({ navigation }) => {
-  const [activeTab, setActiveTab] = useState('trees'); // 'trees' or 'latex'
+const HistoryScreen = ({ navigation, route }) => {
+  const { initialTab } = route.params || {};
+  const [activeTab, setActiveTab] = useState(initialTab || 'trees'); // 'trees' or 'latex'
   const [scans, setScans] = useState([]);
   const [latexBatches, setLatexBatches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,18 +30,26 @@ const HistoryScreen = ({ navigation }) => {
   const [selectedFilter, setSelectedFilter] = useState('all');
 
   useEffect(() => {
-    loadData();
-  }, [activeTab]);
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [activeTab])
+  );
 
   const loadData = async () => {
     setLoading(true);
     try {
       if (activeTab === 'trees') {
         const response = await scanAPI.getAll();
-        setScans(response.data);
+        setScans(response.data || []);
       } else {
         const response = await latexAPI.getAll();
-        setLatexBatches(response.data);
+        setLatexBatches(response.data || []);
       }
     } catch (error) {
       console.log('Load data error:', error);
@@ -103,88 +114,119 @@ const HistoryScreen = ({ navigation }) => {
       onPress={() => navigation.navigate('LatexDetail', { batch: item })}
       activeOpacity={0.9}
     >
-      <Image source={{ uri: item.imageURL }} style={styles.scanImage} />
+      <View style={styles.cardImageContainer}>
+        <Image source={{ uri: item.imageURL }} style={styles.scanImage} />
+        <View style={styles.cardTypeIcon}>
+          <MaterialIcons name="opacity" size={14} color="#FFF" />
+        </View>
+      </View>
       
       <View style={styles.scanInfo}>
         <View style={styles.scanHeader}>
-          <View>
-            <Text style={styles.scanDate}>
-              {new Date(item.collectionDate).toLocaleDateString()}
-            </Text>
-            <Text style={styles.scanTreeName}>Batch: {item.batchID}</Text>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.scanTreeName} numberOfLines={1}>Batch: {item.batchID}</Text>
+            <View
+              style={[
+                styles.statusBadge,
+                { backgroundColor: getGradeColor(item.qualityClassification?.grade) + '15' },
+              ]}
+            >
+              <Text style={[styles.statusText, { color: getGradeColor(item.qualityClassification?.grade) }]}>
+                Grade {item.qualityClassification?.grade || '?'}
+              </Text>
+            </View>
           </View>
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: getGradeColor(item.qualityClassification?.grade) + '15' },
-            ]}
-          >
-            <Text style={[styles.statusText, { color: getGradeColor(item.qualityClassification?.grade) }]}>
-              Grade {item.qualityClassification?.grade || '?'}
-            </Text>
-          </View>
+          <Text style={styles.scanDate}>
+            {new Date(item.collectionDate || item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+          </Text>
         </View>
 
         <View style={styles.statsRow}>
           <View style={styles.statItem}>
-            <MaterialIcons name="science" size={16} color={theme.colors.textLight} />
+            <MaterialIcons name="science" size={14} color={theme.colors.textSecondary} />
             <Text style={styles.statValue}>
-              {item.productYieldEstimation?.dryRubberContent ? `${item.productYieldEstimation.dryRubberContent}% DRC` : 'N/A'}
+              {item.productYieldEstimation?.dryRubberContent ? `${item.productYieldEstimation.dryRubberContent}%` : '--'}
             </Text>
+            <Text style={styles.statLabel}>DRC</Text>
           </View>
+          <View style={styles.statDivider} />
           <View style={styles.statItem}>
-            <MaterialIcons name="opacity" size={16} color={theme.colors.textLight} />
+            <MaterialIcons name="water-drop" size={14} color={theme.colors.textSecondary} />
             <Text style={styles.statValue}>
-              {item.quantityEstimation?.volume ? `${item.quantityEstimation.volume}L` : 'N/A'}
+              {item.quantityEstimation?.volume ? `${item.quantityEstimation.volume}L` : '--'}
             </Text>
+            <Text style={styles.statLabel}>Vol</Text>
           </View>
         </View>
       </View>
+      
+      <MaterialIcons name="chevron-right" size={24} color={theme.colors.border} style={styles.chevron} />
     </TouchableOpacity>
   );
 
-  const renderScanItem = ({ item }) => (
+  const renderScanItem = ({ item }) => {
+    // Determine the icon and label for the detected part
+    const detectedPart = item.treeIdentification?.detectedPart || 'whole_tree';
+    let partIcon = 'park'; // Default tree icon
+    let partLabel = 'Tree';
+
+    if (detectedPart === 'trunk') {
+      partIcon = 'straighten'; // Or another icon representing trunk/height
+      partLabel = 'Trunk';
+    } else if (detectedPart === 'leaf') {
+      partIcon = 'eco'; // Leaf icon
+      partLabel = 'Leaf';
+    }
+
+    return (
     <TouchableOpacity 
       style={styles.scanCard}
       onPress={() => navigation.navigate('ScanDetail', { scan: item })}
       activeOpacity={0.9}
     >
-      <Image source={{ uri: item.imageURL }} style={styles.scanImage} />
+      <View style={styles.cardImageContainer}>
+        <Image source={{ uri: item.imageURL }} style={styles.scanImage} />
+        <View style={[styles.cardTypeIcon, { backgroundColor: theme.colors.primary }]}>
+          <MaterialIcons name={partIcon} size={14} color="#FFF" />
+        </View>
+      </View>
       
       <View style={styles.scanInfo}>
         <View style={styles.scanHeader}>
-          <View>
-            <Text style={styles.scanDate}>
-              {new Date(item.createdAt).toLocaleDateString()}
-            </Text>
-            <Text style={styles.scanTime}>
-              {new Date(item.createdAt).toLocaleTimeString()}
-            </Text>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.scanTreeName} numberOfLines={1}>Tree {item.tree?.treeID}</Text>
+            <View
+              style={[
+                styles.statusBadge,
+                { backgroundColor: getHealthColor(item.tree?.healthStatus) + '15' },
+              ]}
+            >
+              <MaterialIcons 
+                name={item.tree?.healthStatus === 'healthy' ? 'check-circle' : item.tree?.healthStatus === 'diseased' ? 'error-outline' : 'warning'}
+                size={12}
+                color={getHealthColor(item.tree?.healthStatus)}
+              />
+              <Text style={[styles.statusText, { color: getHealthColor(item.tree?.healthStatus) }]}>
+                {item.tree?.healthStatus || 'Unknown'}
+              </Text>
+            </View>
           </View>
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: getHealthColor(item.tree?.healthStatus) + '15' },
-            ]}
-          >
-            <MaterialIcons 
-              name={item.tree?.healthStatus === 'healthy' ? 'check-circle' : item.tree?.healthStatus === 'diseased' ? 'error-outline' : 'warning'}
-              size={16}
-              color={getHealthColor(item.tree?.healthStatus)}
-            />
-            <Text style={[styles.statusLabel, { color: getHealthColor(item.tree?.healthStatus) }]}>
-              {item.tree?.healthStatus || 'Unknown'}
-            </Text>
-          </View>
+          <Text style={styles.scanDate}>
+            {new Date(item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} • {new Date(item.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+          </Text>
         </View>
 
-        <View style={styles.treeIDContainer}>
-          <MaterialIcons name="park" size={16} color={theme.colors.primary} />
-          <Text style={styles.treeID}>Tree {item.tree?.treeID}</Text>
+        <View style={styles.statsRow}>
+           <Text style={styles.scanSubtitle}>
+             Scanned Part: <Text style={styles.scanSubtitleBold}>{partLabel}</Text>
+           </Text>
         </View>
       </View>
+
+      <MaterialIcons name="chevron-right" size={24} color={theme.colors.border} style={styles.chevron} />
     </TouchableOpacity>
   );
+};
 
   return (
     <View style={styles.container}>
@@ -271,42 +313,49 @@ const styles = StyleSheet.create({
   // Header
   header: {
     paddingHorizontal: theme.spacing.lg,
-    paddingTop: 50,
+    paddingTop: Platform.OS === 'ios' ? 60 : 50,
     paddingBottom: theme.spacing.md,
     backgroundColor: theme.colors.surface,
-    ...theme.shadows.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderLight,
   },
   headerTitle: {
     fontSize: theme.fontSize.xl,
-    fontWeight: 'bold',
+    fontWeight: '800',
     color: theme.colors.text,
+    letterSpacing: -0.5,
   },
 
-  // Tabs
+  // Tabs - Segmented Control Style
   tabContainer: {
     flexDirection: 'row',
-    padding: theme.spacing.md,
-    backgroundColor: theme.colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    padding: 6,
+    marginHorizontal: theme.spacing.lg,
+    marginTop: theme.spacing.md,
+    backgroundColor: theme.colors.inputBg,
+    borderRadius: 16,
+    marginBottom: theme.spacing.md,
   },
   tabButton: {
     flex: 1,
     paddingVertical: 10,
     alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    justifyContent: 'center',
+    borderRadius: 12,
   },
   tabButtonActive: {
-    borderBottomColor: theme.colors.primary,
+    backgroundColor: theme.colors.surface,
+    ...theme.shadows.sm,
+    shadowOpacity: 0.1,
   },
   tabText: {
-    fontSize: theme.fontSize.md,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.textSecondary,
     fontWeight: '600',
   },
   tabTextActive: {
     color: theme.colors.primary,
+    fontWeight: '700',
   },
 
   centerContainer: {
@@ -337,13 +386,14 @@ const styles = StyleSheet.create({
   // Filters
   filterContainer: {
     flexDirection: 'row',
-    padding: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
   },
   filterChip: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface,
     marginRight: 8,
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -353,8 +403,9 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary,
   },
   filterText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: 13,
     color: theme.colors.textSecondary,
+    fontWeight: '500',
   },
   filterTextActive: {
     color: '#FFF',
@@ -362,69 +413,132 @@ const styles = StyleSheet.create({
   },
 
   listContent: {
-    padding: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    paddingBottom: 40,
   },
+  
+  // Card Styles
   scanCard: {
     flexDirection: 'row',
     backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
-    padding: theme.spacing.md,
+    borderRadius: 20,
+    marginBottom: 16,
+    padding: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
     ...theme.shadows.sm,
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+  },
+  cardImageContainer: {
+    position: 'relative',
+    marginRight: 16,
   },
   scanImage: {
-    width: 80,
-    height: 80,
-    borderRadius: theme.borderRadius.md,
-    marginRight: theme.spacing.md,
-    backgroundColor: theme.colors.background,
+    width: 72,
+    height: 72,
+    borderRadius: 16,
+    backgroundColor: theme.colors.inputBg,
   },
+  cardTypeIcon: {
+    position: 'absolute',
+    bottom: -6,
+    right: -6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: theme.colors.primary, // Default blue, overridden in component
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: theme.colors.surface,
+  },
+  
   scanInfo: {
     flex: 1,
     justifyContent: 'center',
+    paddingVertical: 4,
   },
   scanHeader: {
+    marginBottom: 6,
+  },
+  headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: theme.spacing.md,
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  scanTreeName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.text,
+    flex: 1,
+    marginRight: 8,
   },
   scanDate: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.textSecondary,
-    fontWeight: '600',
+    fontSize: 12,
+    color: theme.colors.textLight,
+    fontWeight: '500',
   },
-  scanTime: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.textSecondary,
-    marginTop: theme.spacing.xs,
-  },
+  
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.borderRadius.full,
-    gap: theme.spacing.xs,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
   },
-  statusLabel: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: 'bold',
-    textTransform: 'capitalize',
-  },
-  treeIDContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: theme.spacing.md,
-    gap: theme.spacing.sm,
-  },
-  treeID: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: 'bold',
-    color: theme.colors.text,
+  statusText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
-  // Info Rows
+  // Stats / Details Row
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  statValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.text,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: theme.colors.textLight,
+    marginLeft: 2,
+  },
+  statDivider: {
+    width: 1,
+    height: 12,
+    backgroundColor: theme.colors.border,
+    marginHorizontal: 12,
+  },
+  
+  scanSubtitle: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+  },
+  scanSubtitleBold: {
+    fontWeight: '600',
+    color: theme.colors.text,
+  },
+  
+  chevron: {
+    marginLeft: 8,
+    opacity: 0.5,
+  },
+
+  // Info Rows (kept for legacy support if needed, though mostly unused now)
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -447,43 +561,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: '600',
     color: theme.colors.text,
-  },
-
-  // Quality Card
-  qualityCard: {
-    marginTop: theme.spacing.lg,
-    padding: theme.spacing.lg,
-    backgroundColor: theme.colors.background,
-    borderRadius: theme.borderRadius.lg,
-    borderLeftWidth: 4,
-    borderLeftColor: theme.colors.primary,
-  },
-  qualityHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: theme.spacing.sm,
-  },
-  qualityLabel: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: 'bold',
-    color: theme.colors.surface,
-  },
-  qualityBadgeText: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: 'bold',
-    color: theme.colors.primary,
-    textTransform: 'capitalize',
-    backgroundColor: theme.colors.surface,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
-    borderRadius: theme.borderRadius.full,
-    overflow: 'hidden',
-  },
-  qualityPrice: {
-    fontSize: theme.fontSize.md,
-    fontWeight: 'bold',
-    color: theme.colors.success,
   },
 });
 

@@ -33,14 +33,34 @@ const scanSchema = new mongoose.Schema({
   },
   // Tree Analysis Results
   treeIdentification: {
-    isRubberTree: Boolean,
-    confidence: Number // 0-100
+    isRubberTree: {
+      type: Boolean,
+      default: true
+    },
+    confidence: {
+      type: Number,
+      default: 0
+    },
+    maturity: String,
+    detectedPart: String // 'trunk', 'leaf', 'whole_tree'
   },
   trunkAnalysis: {
     girth: Number,
     diameter: Number,
     texture: String,
-    color: String
+    color: String,
+    healthStatus: String, // 'healthy', 'diseased'
+    damages: [String]
+  },
+  leafAnalysis: {
+    healthStatus: String, // 'healthy', 'diseased'
+    color: String,
+    spotCount: Number,
+    diseases: [{
+      name: String,
+      confidence: Number,
+      severity: String
+    }]
   },
   diseaseDetection: [{
     name: String,
@@ -60,6 +80,31 @@ const scanSchema = new mongoose.Schema({
     },
     dryRubberContent: Number, // Percentage
     estimatedPrice: Number
+  },
+  latexColorAnalysis: {
+    primaryColor: String,
+    rgb: {
+      r: Number,
+      g: Number,
+      b: Number
+    },
+    hex: String
+  },
+  contaminationDetection: {
+    hasWater: Boolean,
+    hasContamination: Boolean,
+    contaminationLevel: String,
+    contaminantTypes: [String]
+  },
+  quantityEstimation: {
+    volume: Number,
+    weight: Number,
+    confidence: Number
+  },
+  productYieldEstimation: {
+    dryRubberContent: Number,
+    estimatedYield: Number,
+    productType: String
   },
   latexFlowIntensity: {
     type: String,

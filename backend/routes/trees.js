@@ -93,6 +93,8 @@ router.post('/', protect, async (req, res) => {
     const {
       treeID,
       location,
+      species,
+      isRubberTree,
       plantedDate,
       age,
       trunkGirth,
@@ -123,11 +125,19 @@ router.post('/', protect, async (req, res) => {
       });
     }
 
+    // Format location if string
+    let formattedLocation = location;
+    if (typeof location === 'string') {
+      formattedLocation = { address: location };
+    }
+
     // Create tree
     const tree = await Tree.create({
       owner: req.user.id,
       treeID,
-      location,
+      location: formattedLocation,
+      species,
+      isRubberTree,
       plantedDate,
       age,
       trunkGirth,
@@ -147,7 +157,8 @@ router.post('/', protect, async (req, res) => {
     console.error('Create tree error:', error);
     res.status(500).json({
       success: false,
-      error: 'Server error creating tree'
+      error: error.message || 'Server error creating tree',
+      details: error
     });
   }
 });

@@ -22,7 +22,12 @@
         "backgroundColor": "#10B981"
       },
       "package": "com.rubbersense.app",
-      "permissions": ["INTERNET", "ACCESS_NETWORK_STATE"]
+      "permissions": [
+        "INTERNET", 
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -42,6 +47,12 @@
         "expo-image-picker",
         {
           "photosPermission": "The app accesses your photos to let you share them with your friends."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow RubberSense to use your location to map rubber farms and show local weather."
         }
       ]
     ]

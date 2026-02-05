@@ -1,4 +1,3 @@
-opencv-python-headless
 numpy
-requests
-Pillow
+opencv-python
+ultralytics

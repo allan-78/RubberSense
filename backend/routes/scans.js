@@ -10,7 +10,7 @@ const Tree = require('../models/Tree');
 const { protect } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 const { uploadToCloudinary } = require('../config/cloudinary');
-const { analyzeTreeImage } = require('../utils/imageAnalysis');
+const { analyzeTreeImage, analyzeLatexImage } = require('../utils/imageAnalysis');
 
 // Create uploads directory if it doesn't exist
 if (!fs.existsSync('uploads')) {
@@ -24,7 +24,7 @@ if (!fs.existsSync('uploads')) {
 // ============================================
 router.post('/upload', protect, upload.single('image'), async (req, res) => {
   try {
-    const { treeId, scanType } = req.body;
+    const { treeId, scanType, scanSubType } = req.body;
 
     // Validation
     if (!req.file) {
@@ -67,10 +67,43 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
     // Delete local file after upload
     fs.unlinkSync(req.file.path);
 
-    // Analyze image (placeholder - will use ML model later)
+    // Analyze image
     const startTime = Date.now();
-    const analysisResults = await analyzeTreeImage(uploadResult.url);
+    let analysisResults;
+    if (scanType === 'latex') {
+      analysisResults = await analyzeLatexImage(uploadResult.url);
+    } else {
+      analysisResults = await analyzeTreeImage(uploadResult.url, scanSubType);
+    }
     const processingTime = Date.now() - startTime;
+
+    // Check for AI validation errors (e.g. Not a tree)
+    if (analysisResults.error) {
+      return res.status(400).json({
+        success: false,
+        error: analysisResults.error,
+        details: analysisResults
+      });
+    }
+
+    // Sanitize analysis results before saving
+    // Remove fields not in schema or that might cause issues
+    const { 
+      treeIdentification, trunkAnalysis, leafAnalysis, diseaseDetection, tappabilityAssessment, 
+      latexQualityPrediction, latexFlowIntensity, productivityRecommendation,
+      // Latex specific fields
+      latexColorAnalysis, contaminationDetection, quantityEstimation, productYieldEstimation
+    } = analysisResults;
+
+    // Ensure diseaseDetection is an array and has valid structure
+    const validDiseaseDetection = Array.isArray(diseaseDetection) 
+      ? diseaseDetection.map(d => ({
+          name: d.name || 'Unknown',
+          confidence: d.confidence || 0,
+          severity: d.severity || 'low',
+          recommendation: d.recommendation || ''
+        }))
+      : [];
 
     // Create scan record
     const scan = await Scan.create({
@@ -79,20 +112,37 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
       scanType: scanType || 'tree',
       imageURL: uploadResult.url,
       cloudinaryID: uploadResult.publicId,
-      ...analysisResults,
+      treeIdentification: {
+        isRubberTree: treeIdentification?.isRubberTree || true,
+        confidence: treeIdentification?.confidence || 0,
+        maturity: treeIdentification?.maturity || 'mature',
+        detectedPart: treeIdentification?.detectedPart || 'whole_tree'
+      },
+      trunkAnalysis,
+      leafAnalysis,
+      diseaseDetection: validDiseaseDetection,
+      tappabilityAssessment,
+      latexQualityPrediction: latexQualityPrediction || undefined,
+      latexFlowIntensity: latexFlowIntensity || undefined,
+      productivityRecommendation: productivityRecommendation || undefined,
+      // Latex specific fields
+      latexColorAnalysis,
+      contaminationDetection,
+      quantityEstimation,
+      productYieldEstimation,
       processingStatus: 'completed',
       processingTime
     });
 
     // Update tree with scan results
     await Tree.findByIdAndUpdate(treeId, {
-      healthStatus: analysisResults.diseaseDetection[0]?.name === 'No disease detected' ? 'healthy' : 'diseased',
-      isTappable: analysisResults.tappabilityAssessment.isTappable,
-      tappabilityScore: analysisResults.tappabilityAssessment.score,
-      trunkGirth: analysisResults.trunkAnalysis.girth,
-      trunkDiameter: analysisResults.trunkAnalysis.diameter,
-      barkTexture: analysisResults.trunkAnalysis.texture,
-      barkColor: analysisResults.trunkAnalysis.color,
+      healthStatus: validDiseaseDetection[0]?.name === 'No disease detected' ? 'healthy' : 'diseased',
+      isTappable: tappabilityAssessment?.isTappable || false,
+      tappabilityScore: tappabilityAssessment?.score || 0,
+      trunkGirth: trunkAnalysis?.girth || 0,
+      trunkDiameter: trunkAnalysis?.diameter || 0,
+      barkTexture: trunkAnalysis?.texture || 'unknown',
+      barkColor: trunkAnalysis?.color || 'unknown',
       lastScannedAt: Date.now(),
       $inc: { totalScans: 1 }
     });

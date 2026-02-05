@@ -16,6 +16,14 @@ const treeSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
+  species: {
+    type: String,
+    default: 'Rubber'
+  },
+  isRubberTree: {
+    type: Boolean,
+    default: true
+  },
   location: {
     latitude: Number,
     longitude: Number,

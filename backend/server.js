@@ -11,6 +11,10 @@ const authRoutes = require('./routes/auth');
 const treeRoutes = require('./routes/trees');
 const scanRoutes = require('./routes/scans');
 const latexRoutes = require('./routes/latex');
+const chatRoutes = require('./routes/chat');
+const postRoutes = require('./routes/posts');
+const userRoutes = require('./routes/users');
+const messageRoutes = require('./routes/messages');
 
 // Initialize Express app
 const app = express();
@@ -49,6 +53,10 @@ app.use('/api/auth', authRoutes);
 app.use('/api/trees', treeRoutes);
 app.use('/api/scans', scanRoutes);
 app.use('/api/latex', latexRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/posts', postRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/messages', messageRoutes);
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE
