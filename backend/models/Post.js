@@ -19,6 +19,7 @@ const postSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  attachments: [mongoose.Schema.Types.Mixed],
   likes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -29,6 +30,7 @@ const postSchema = new mongoose.Schema({
       ref: 'User'
     },
     text: String,
+    attachments: [mongoose.Schema.Types.Mixed],
     createdAt: {
       type: Date,
       default: Date.now
@@ -39,6 +41,7 @@ const postSchema = new mongoose.Schema({
         ref: 'User'
       },
       text: String,
+      attachments: [mongoose.Schema.Types.Mixed],
       createdAt: {
         type: Date,
         default: Date.now

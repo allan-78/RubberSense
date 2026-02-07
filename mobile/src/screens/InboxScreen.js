@@ -10,10 +10,33 @@ import {
   RefreshControl
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
 import { messageAPI } from '../services/api';
 import theme from '../styles/theme';
+
+const BAD_WORDS = [
+  'fuck',
+  'shit',
+  'bitch',
+  'asshole',
+  'bastard',
+  'dick',
+  'piss',
+  'cunt',
+  'fucker',
+  'motherfucker',
+  'slut',
+  'whore',
+];
+
+const hashBadWords = (text = '') => {
+  let result = text;
+  BAD_WORDS.forEach(word => {
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    result = result.replace(regex, '#'.repeat(word.length));
+  });
+  return result;
+};
 
 const InboxScreen = ({ navigation }) => {
   const { user } = useAuth();
@@ -84,7 +107,7 @@ const InboxScreen = ({ navigation }) => {
                styles.messagePreview, 
                !isRead && !isMe ? styles.unreadMessage : null
              ]} numberOfLines={1}>
-              {isMe ? 'You: ' : ''}{lastMessage.text}
+              {isMe ? 'You: ' : ''}{hashBadWords(lastMessage?.text || '')}
             </Text>
             {/* Unread indicator for received messages */}
             {!isRead && !isMe && (
@@ -107,17 +130,12 @@ const InboxScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={theme.gradients.primary}
-        style={styles.header}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
+      <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#FFF" />
+          <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Messages</Text>
-      </LinearGradient>
+      </View>
 
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -148,15 +166,17 @@ const InboxScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: theme.colors.background,
   },
   header: {
-    paddingTop: 50,
-    paddingBottom: 15,
+    paddingTop: 56,
+    paddingBottom: 12,
     paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
-    ...theme.shadows.md,
+    backgroundColor: theme.colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderLight,
   },
   backButton: {
     marginRight: 15,
@@ -164,7 +184,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFF',
+    color: theme.colors.text,
   },
   loadingContainer: {
     flex: 1,
@@ -176,13 +196,13 @@ const styles = StyleSheet.create({
   },
   conversationItem: {
     flexDirection: 'row',
-    backgroundColor: '#FFF',
+    backgroundColor: theme.colors.surface,
     padding: 16,
     borderRadius: 16,
     marginBottom: 12,
     ...theme.shadows.sm,
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.03)',
+    borderColor: theme.colors.borderLight,
   },
   avatarContainer: {
     marginRight: 16,

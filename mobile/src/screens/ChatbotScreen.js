@@ -15,6 +15,30 @@ import { LinearGradient } from 'expo-linear-gradient';
 import theme from '../styles/theme';
 import { chatAPI } from '../services/api';
 
+const BAD_WORDS = [
+  'fuck',
+  'shit',
+  'bitch',
+  'asshole',
+  'bastard',
+  'dick',
+  'piss',
+  'cunt',
+  'fucker',
+  'motherfucker',
+  'slut',
+  'whore',
+];
+
+const hashBadWords = (text = '') => {
+  let result = text;
+  BAD_WORDS.forEach(word => {
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    result = result.replace(regex, '#'.repeat(word.length));
+  });
+  return result;
+};
+
 const ChatbotScreen = ({ navigation }) => {
   const [messages, setMessages] = useState([
     {
@@ -31,9 +55,10 @@ const ChatbotScreen = ({ navigation }) => {
   const handleSend = async () => {
     if (inputText.trim() === '') return;
 
+    const sanitizedText = hashBadWords(inputText);
     const userMessage = {
       id: Date.now().toString(),
-      text: inputText,
+      text: sanitizedText,
       sender: 'user',
       timestamp: new Date()
     };
@@ -48,7 +73,7 @@ const ChatbotScreen = ({ navigation }) => {
       
       const botMessage = {
         id: (Date.now() + 1).toString(),
-        text: response.response || "I'm having trouble connecting to my brain right now.",
+        text: hashBadWords(response.response || "I'm having trouble connecting to my brain right now."),
         sender: 'bot',
         timestamp: new Date()
       };
@@ -58,7 +83,7 @@ const ChatbotScreen = ({ navigation }) => {
       console.error('Chat error:', error);
       const errorMessage = {
         id: (Date.now() + 1).toString(),
-        text: "Sorry, I'm having trouble connecting to the server. Please try again later.",
+        text: hashBadWords("Sorry, I'm having trouble connecting to the server. Please try again later."),
         sender: 'bot',
         timestamp: new Date()
       };
@@ -89,7 +114,7 @@ const ChatbotScreen = ({ navigation }) => {
           isUser ? styles.userBubbleContent : styles.botBubbleContent
         ]}>
           <Text style={[styles.messageText, isUser ? styles.userMessageText : styles.botMessageText]}>
-            {item.text}
+            {hashBadWords(item.text)}
           </Text>
           <Text style={[styles.timestamp, isUser ? styles.userTimestamp : styles.botTimestamp]}>
             {item.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

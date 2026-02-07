@@ -22,6 +22,10 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+      config.timeout = Math.max(config.timeout || 30000, 120000);
+    }
     return config;
   },
   (error) => {
@@ -105,10 +109,154 @@ export const treeAPI = {
 export const postAPI = {
   getAll: () => api.get('/api/posts'),
   create: (data) => api.post('/api/posts', data),
+  createWithMedia: async (formData) => {
+    try {
+      return await api.post('/api/posts', formData);
+    } catch (err) {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/posts`, {
+          method: 'POST',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+          },
+          body: formData,
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw json;
+        }
+        return json;
+      } catch (e) {
+        throw e;
+      }
+    }
+  },
   getMyPosts: () => api.get('/api/posts/my-posts'),
   toggleLike: (id) => api.put(`/api/posts/${id}/like`),
   addComment: (id, text) => api.post(`/api/posts/${id}/comment`, { text }),
+  addCommentWithMedia: async (id, formData) => {
+    try {
+      return await api.post(`/api/posts/${id}/comment`, formData);
+    } catch (err) {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/posts/${id}/comment`, {
+          method: 'POST',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+          },
+          body: formData,
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw json;
+        }
+        return json;
+      } catch (e) {
+        throw e;
+      }
+    }
+  },
   replyToComment: (postId, commentId, text) => api.post(`/api/posts/${postId}/comment/${commentId}/reply`, { text }),
+  replyToCommentWithMedia: async (postId, commentId, formData) => {
+    try {
+      return await api.post(`/api/posts/${postId}/comment/${commentId}/reply`, formData);
+    } catch (err) {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/posts/${postId}/comment/${commentId}/reply`, {
+          method: 'POST',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+          },
+          body: formData,
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw json;
+        }
+        return json;
+      } catch (e) {
+        throw e;
+      }
+    }
+  },
+  updatePost: (postId, data) => api.put(`/api/posts/${postId}`, data),
+  updatePostWithMedia: async (postId, formData) => {
+    try {
+      return await api.put(`/api/posts/${postId}`, formData);
+    } catch (err) {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/posts/${postId}`, {
+          method: 'PUT',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+          },
+          body: formData,
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw json;
+        }
+        return json;
+      } catch (e) {
+        throw e;
+      }
+    }
+  },
+  deletePost: (postId) => api.delete(`/api/posts/${postId}`),
+  updateComment: (postId, commentId, data) => api.put(`/api/posts/${postId}/comment/${commentId}`, data),
+  updateCommentWithMedia: async (postId, commentId, formData) => {
+    try {
+      return await api.put(`/api/posts/${postId}/comment/${commentId}`, formData);
+    } catch (err) {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/posts/${postId}/comment/${commentId}`, {
+          method: 'PUT',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+          },
+          body: formData,
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw json;
+        }
+        return json;
+      } catch (e) {
+        throw e;
+      }
+    }
+  },
+  deleteComment: (postId, commentId) => api.delete(`/api/posts/${postId}/comment/${commentId}`),
+  updateReply: (postId, commentId, replyId, data) => api.put(`/api/posts/${postId}/comment/${commentId}/reply/${replyId}`, data),
+  updateReplyWithMedia: async (postId, commentId, replyId, formData) => {
+    try {
+      return await api.put(`/api/posts/${postId}/comment/${commentId}/reply/${replyId}`, formData);
+    } catch (err) {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/posts/${postId}/comment/${commentId}/reply/${replyId}`, {
+          method: 'PUT',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+          },
+          body: formData,
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw json;
+        }
+        return json;
+      } catch (e) {
+        throw e;
+      }
+    }
+  },
+  deleteReply: (postId, commentId, replyId) => api.delete(`/api/posts/${postId}/comment/${commentId}/reply/${replyId}`),
 };
 
 // User API
@@ -122,6 +270,29 @@ export const messageAPI = {
   getConversations: () => api.get('/api/messages/conversations'),
   getMessages: (userId) => api.get(`/api/messages/${userId}`),
   sendMessage: (receiverId, text) => api.post('/api/messages', { receiverId, text }),
+  sendMessageWithMedia: async (formData) => {
+    try {
+      return await api.post('/api/messages', formData);
+    } catch (err) {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : undefined,
+          },
+          body: formData,
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw json;
+        }
+        return json;
+      } catch (e) {
+        throw e;
+      }
+    }
+  },
 };
 
 // Scan API

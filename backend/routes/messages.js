@@ -4,22 +4,50 @@ const mongoose = require('mongoose');
 const Message = require('../models/Message');
 const User = require('../models/User');
 const { protect } = require('../middleware/auth');
+const fs = require('fs');
+const upload = require('../middleware/upload');
+const { uploadToCloudinary } = require('../config/cloudinary');
+
+const uploadAttachments = async (files, folder) => {
+  if (!files || files.length === 0) return [];
+  const uploaded = await Promise.all(
+    files.map(async (file) => {
+      const result = await uploadToCloudinary(file, folder);
+      fs.unlinkSync(file.path);
+      return {
+        url: result.url,
+        publicId: result.publicId,
+        name: file.originalname,
+        type: file.mimetype,
+        size: file.size
+      };
+    })
+  );
+  return uploaded;
+};
 
 // @route   POST /api/messages
 // @desc    Send a message
 // @access  Private
-router.post('/', protect, async (req, res) => {
+router.post('/', protect, upload.array('files', 10), async (req, res) => {
   try {
     const { receiverId, text } = req.body;
+    
+    // Check if there are files or text
+    if (!receiverId || (!text && (!req.files || req.files.length === 0))) {
+      return res.status(400).json({ error: 'Receiver and content (text or files) are required' });
+    }
 
-    if (!receiverId || !text) {
-      return res.status(400).json({ error: 'Receiver and text are required' });
+    let attachmentsData = [];
+    if (req.files && req.files.length > 0) {
+       attachmentsData = await uploadAttachments(req.files, 'rubbersense/messages');
     }
 
     const newMessage = new Message({
       sender: req.user.id,
       receiver: receiverId,
-      text
+      text: text || '',
+      attachments: attachmentsData
     });
 
     const savedMessage = await newMessage.save();

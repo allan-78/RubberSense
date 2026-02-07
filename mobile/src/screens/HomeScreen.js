@@ -765,7 +765,7 @@ const styles = StyleSheet.create({
   // Content Layer
   contentLayer: {
     marginTop: -40,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface,
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     paddingHorizontal: 20,
@@ -776,25 +776,25 @@ const styles = StyleSheet.create({
   // Search
   searchContainer: {
     marginBottom: 25,
-    shadowColor: '#000',
+    shadowColor: theme.colors.text,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
     elevation: 3,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     height: 50,
     borderRadius: 16,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: '#f0f0f0',
+    borderColor: theme.colors.border,
   },
   searchText: {
     marginLeft: 12,
-    color: theme.colors.textSecondary || '#999',
+    color: theme.colors.textSecondary,
     fontSize: 15,
   },
 
@@ -820,14 +820,14 @@ const styles = StyleSheet.create({
   actionLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#555',
+    color: theme.colors.textSecondary,
   },
 
   // Bento Grid
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#333',
+    color: theme.colors.text,
     marginBottom: 16,
     letterSpacing: 0.5,
   },
@@ -847,14 +847,14 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   bentoCard: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 24,
     padding: 16,
     marginBottom: 16,
-    shadowColor: '#000',
+    shadowColor: theme.colors.text,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
-    shadowRadius: 10,
+    shadowRadius: 12,
     elevation: 2,
     overflow: 'hidden',
   },
@@ -876,7 +876,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -922,12 +922,12 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 13,
-    color: '#777',
+    color: theme.colors.textSecondary,
     marginBottom: 8,
   },
   progressBarBg: {
     height: 6,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: theme.colors.borderLight,
     borderRadius: 3,
     width: '100%',
   },
@@ -941,7 +941,7 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 24,
     overflow: 'hidden',
-    backgroundColor: '#f0f0f0',
+    backgroundColor: theme.colors.surfaceHighlight,
   },
   mapView: {
     ...StyleSheet.absoluteFillObject,
@@ -1005,13 +1005,13 @@ const styles = StyleSheet.create({
 
   // List
   listContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 24,
     padding: 8,
-    shadowColor: '#000',
+    shadowColor: theme.colors.text,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
     elevation: 2,
   },
   listItem: {
@@ -1020,7 +1020,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#f5f5f5',
+    borderBottomColor: theme.colors.borderLight,
   },
   listIcon: {
     width: 40,
@@ -1036,11 +1036,11 @@ const styles = StyleSheet.create({
   listTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: theme.colors.text,
   },
   listSubtitle: {
     fontSize: 12,
-    color: '#888',
+    color: theme.colors.textLight,
     marginTop: 2,
   },
   emptyState: {
@@ -1049,7 +1049,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyText: {
-    color: '#999',
+    color: theme.colors.textLight,
     marginTop: 8,
     fontSize: 14,
   },
