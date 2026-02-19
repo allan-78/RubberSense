@@ -49,7 +49,7 @@ const hashBadWords = (text = '') => {
   return result;
 };
 
-const ChatbotScreen = ({ navigation }) => {
+const ChatbotScreen = ({ navigation, route }) => {
   const [messages, setMessages] = useState([
     {
       id: '1',
@@ -62,10 +62,12 @@ const ChatbotScreen = ({ navigation }) => {
   const [isTyping, setIsTyping] = useState(false);
   const flatListRef = useRef();
 
-  const handleSend = async () => {
-    if (inputText.trim() === '') return;
+  const handleSend = async (textOverride = null) => {
+    const textToSend = typeof textOverride === 'string' ? textOverride : inputText;
+    
+    if (textToSend.trim() === '') return;
 
-    const sanitizedText = hashBadWords(inputText);
+    const sanitizedText = hashBadWords(textToSend);
     const userMessage = {
       id: Date.now().toString(),
       text: sanitizedText,
@@ -102,6 +104,23 @@ const ChatbotScreen = ({ navigation }) => {
       setIsTyping(false);
     }
   };
+
+  // Handle initial prompt from navigation (e.g., from ScanDetailScreen)
+  useEffect(() => {
+    if (route.params?.initialPrompt) {
+      const { initialPrompt, autoSend } = route.params;
+      
+      if (autoSend) {
+        handleSend(initialPrompt);
+        // Clear params to prevent re-sending on re-renders
+        navigation.setParams({ initialPrompt: null, autoSend: false });
+      } else {
+        setInputText(initialPrompt);
+        // Clear params so it doesn't keep overwriting input
+        navigation.setParams({ initialPrompt: null });
+      }
+    }
+  }, [route.params]);
 
   useEffect(() => {
     flatListRef.current?.scrollToEnd({ animated: true });
@@ -191,15 +210,14 @@ const ChatbotScreen = ({ navigation }) => {
           horizontal 
           showsHorizontalScrollIndicator={false} 
           contentContainerStyle={styles.suggestionsContainer}
+          keyboardShouldPersistTaps="always"
         >
           {SUGGESTIONS.map((suggestion, index) => (
             <TouchableOpacity 
               key={index} 
               style={styles.suggestionChip}
               onPress={() => {
-                setInputText(suggestion);
-                // Optional: Automatically send if preferred
-                // handleSend(suggestion); 
+                handleSend(suggestion); 
               }}
             >
               <Text style={styles.suggestionText}>{suggestion}</Text>

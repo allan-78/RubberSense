@@ -189,7 +189,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                             <TouchableOpacity 
                                 key={index} 
                                 style={styles.promptChip}
-                                onPress={() => navigation.navigate('Chatbot', { initialPrompt: prompt })}
+                                onPress={() => navigation.navigate('Chatbot', { initialPrompt: prompt, autoSend: true })}
                             >
                                 <MaterialIcons name="chat-bubble-outline" size={16} color={theme.colors.primary} style={{ marginRight: 6 }} />
                                 <Text style={styles.promptText}>{prompt}</Text>
