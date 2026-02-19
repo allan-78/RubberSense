@@ -78,6 +78,34 @@ const BlogScreen = ({ navigation, route }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
 
+  // Polling for real-time updates
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      const pollInterval = setInterval(() => {
+        if (isActive && !refreshing) {
+          // Silent refresh
+          postAPI.getAll().then(response => {
+            if (isActive && response.data) {
+              setPosts(prevPosts => {
+                // Only update if data changed to avoid re-renders
+                if (JSON.stringify(prevPosts) !== JSON.stringify(response.data)) {
+                  return response.data;
+                }
+                return prevPosts;
+              });
+            }
+          }).catch(err => console.log('Polling error:', err));
+        }
+      }, 5000); // Poll every 5 seconds
+
+      return () => {
+        isActive = false;
+        clearInterval(pollInterval);
+      };
+    }, [refreshing])
+  );
+
   // Comment State
   const [commentModalVisible, setCommentModalVisible] = useState(false);
   const [selectedPost, setSelectedPost] = useState(null);
@@ -99,7 +127,7 @@ const BlogScreen = ({ navigation, route }) => {
 
   // Like Modal State
   const [likesModalVisible, setLikesModalVisible] = useState(false);
-  const [viewingLikes, setViewingLikes] = useState([]);
+  const [viewingLikesPostId, setViewingLikesPostId] = useState(null);
 
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
@@ -395,25 +423,26 @@ const BlogScreen = ({ navigation, route }) => {
   const handleLike = async (postId) => {
     try {
       // Optimistic update
+      const currentUserId = user?._id || user?.id;
       setPosts(currentPosts => 
         currentPosts.map(post => {
           if (post._id === postId) {
             // Robust check for existing like (handles both ID strings and populated objects)
             const isLiked = post.likes && post.likes.some(like => {
-              const likeId = typeof like === 'string' ? like : like._id;
-              return String(likeId) === String(user._id);
+              const likeId = typeof like === 'string' ? like : (like._id || like.id);
+              return String(likeId) === String(currentUserId);
             });
             
             let newLikes = [...(post.likes || [])];
             if (isLiked) {
               newLikes = newLikes.filter(like => {
-                const likeId = typeof like === 'string' ? like : like._id;
-                return String(likeId) !== String(user._id);
+                const likeId = typeof like === 'string' ? like : (like._id || like.id);
+                return String(likeId) !== String(currentUserId);
               });
             } else {
               // Push full user object for optimistic update so Modal works immediately
               newLikes.push({
-                _id: user._id,
+                _id: currentUserId,
                 name: user.name,
                 profileImage: user.profileImage
               });
@@ -447,7 +476,7 @@ const BlogScreen = ({ navigation, route }) => {
   };
 
   const handleViewLikes = (post) => {
-    setViewingLikes(post.likes || []);
+    setViewingLikesPostId(post._id);
     setLikesModalVisible(true);
   };
 
@@ -876,9 +905,10 @@ const BlogScreen = ({ navigation, route }) => {
   };
 
   const renderItem = ({ item }) => {
+    const currentUserId = user?._id || user?.id;
     const isLiked = item.likes && item.likes.some(like => {
-      const likeId = typeof like === 'string' ? like : like._id;
-      return String(likeId) === String(user?._id);
+      const likeId = typeof like === 'string' ? like : (like._id || like.id);
+      return String(likeId) === String(currentUserId);
     });
     const attachments = getAttachments(item);
     const owner = isOwner(item.user);
@@ -929,9 +959,12 @@ const BlogScreen = ({ navigation, route }) => {
                 color={isLiked ? theme.colors.error : theme.colors.textSecondary} 
               />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => handleViewLikes(item)} style={{ marginLeft: 6 }}>
+            <TouchableOpacity 
+              onPress={() => handleViewLikes(item)} 
+              style={{ marginLeft: 8, padding: 4 }} // Increased touch target
+            >
               <Text style={[styles.actionText, isLiked && { color: theme.colors.error }, { marginLeft: 0 }]}>
-                {item.likes.length}
+                {item.likes.length} {item.likes.length === 1 ? 'Like' : 'Likes'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1484,7 +1517,7 @@ const BlogScreen = ({ navigation, route }) => {
               </TouchableOpacity>
             </View>
             <FlatList
-              data={viewingLikes}
+              data={[...(posts.find(p => p._id === viewingLikesPostId)?.likes || [])].reverse()}
               keyExtractor={(item) => (typeof item === 'string' ? item : item._id) || Math.random().toString()}
               renderItem={({ item }) => {
                 const userObj = typeof item === 'string' ? { name: 'User', _id: item } : item;

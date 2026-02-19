@@ -5,6 +5,67 @@ const Post = require('../models/Post');
 const Tree = require('../models/Tree');
 const Scan = require('../models/Scan');
 const { protect } = require('../middleware/auth');
+const fs = require('fs');
+const upload = require('../middleware/upload');
+const { uploadToCloudinary } = require('../config/cloudinary');
+
+// @route   PUT /api/users/profile
+// @desc    Update user profile
+// @access  Private
+router.put('/profile', protect, upload.single('profileImage'), async (req, res) => {
+  console.log('📝 [PUT /profile] Request received');
+  console.log('📦 Body:', req.body);
+  console.log('📁 File:', req.file ? req.file.filename : 'No file');
+
+  try {
+    const { name, bio, phoneNumber, location } = req.body;
+    
+    // Find user
+    let user = await User.findById(req.user.id);
+    if (!user) {
+      console.log('❌ User not found:', req.user.id);
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    // Update fields
+    if (name) user.name = name;
+    if (bio) user.bio = bio;
+    if (phoneNumber) user.phoneNumber = phoneNumber;
+    if (location) user.location = location;
+
+    // Handle Image Upload
+    if (req.file) {
+      console.log('🚀 Uploading to Cloudinary...');
+      try {
+        const uploadResult = await uploadToCloudinary(req.file, 'rubbersense/profiles');
+        console.log('✅ Cloudinary success:', uploadResult.url);
+        user.profileImage = uploadResult.url;
+        fs.unlinkSync(req.file.path);
+      } catch (cloudError) {
+        console.error('❌ Cloudinary upload failed:', cloudError);
+        // Don't fail the whole request, just log it? Or fail?
+        // Let's fail for now to let user know image didn't work.
+        throw new Error('Image upload failed: ' + cloudError.message);
+      }
+    }
+
+    await user.save();
+    console.log('✅ Profile updated successfully');
+
+    res.json({
+      success: true,
+      data: user,
+      message: 'Profile updated successfully'
+    });
+  } catch (error) {
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    console.error('❌ Update profile error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // @route   GET /api/users/:id
 // @desc    Get user profile by ID

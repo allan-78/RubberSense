@@ -18,7 +18,19 @@ const { estimateLatexPrice } = require('../utils/marketPrice');
 // @desc    Create latex batch with analysis
 // @access  Private
 // ============================================
-router.post('/batch', protect, upload.single('image'), async (req, res) => {
+router.post('/batch', protect, (req, res, next) => {
+  console.log('📥 Received /api/latex/batch request');
+  console.log('📝 Headers:', req.headers['content-type']);
+  upload.single('image')(req, res, (err) => {
+    if (err) {
+      console.error('❌ Upload middleware error:', err);
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    console.log('✅ File uploaded:', req.file ? req.file.filename : 'No file');
+    console.log('📦 Body:', req.body);
+    next();
+  });
+}, async (req, res) => {
   try {
     const { batchID, collectionDate, notes } = req.body;
 
@@ -71,12 +83,88 @@ router.post('/batch', protect, upload.single('image'), async (req, res) => {
     // Analyze latex image
     const analysisResults = await analyzeLatexImage(uploadResult.url);
 
+    // Handle user inputs for Volume and Dry Weight (Override AI estimation if provided)
+    // Trim and sanitize inputs
+    let userVolumeStr = req.body.volume ? String(req.body.volume).trim().replace(',', '.') : '0';
+    let userDRCStr = req.body.dryWeight ? String(req.body.dryWeight).trim().replace(',', '.') : '0';
+    
+    let userVolume = parseFloat(userVolumeStr);
+    let userDRC = parseFloat(userDRCStr);
+    
+    console.log(`📊 Parsed User Input - Volume: ${userVolume} (raw: ${req.body.volume}), DRC: ${userDRC} (raw: ${req.body.dryWeight})`);
+
+    if (!isNaN(userVolume) && userVolume > 0) {
+        analysisResults.quantityEstimation = {
+            ...analysisResults.quantityEstimation,
+            volume: userVolume,
+            weight: userVolume, // Assuming 1kg/L roughly for simplicity
+            confidence: 100 // User input is 100% confident
+        };
+    }
+
+    if (!isNaN(userDRC) && userDRC > 0) {
+        analysisResults.productYieldEstimation = {
+            ...analysisResults.productYieldEstimation,
+            dryRubberContent: userDRC,
+            confidence: 100 // User input is 100% confident
+        };
+    }
+
+    // Handle analysis failure
+    let qualityGrade = 'F';
+    let drContent = 33.0;
+    let volume = 0;
+    let processingStatus = 'completed';
+
+    if (analysisResults.error) {
+      console.error('⚠️ Latex Analysis Failed:', analysisResults.error);
+      processingStatus = 'failed';
+      // Use defaults for failed analysis
+      analysisResults.qualityClassification = {
+        grade: 'F',
+        confidence: 0,
+        description: 'Analysis failed: ' + analysisResults.error
+      };
+      // Keep user inputs even if analysis fails
+      analysisResults.productYieldEstimation = {
+        dryRubberContent: !isNaN(userDRC) && userDRC > 0 ? userDRC : 33.0,
+        estimatedYield: 0,
+        productType: 'Unknown'
+      };
+      analysisResults.quantityEstimation = { 
+          volume: !isNaN(userVolume) && userVolume > 0 ? userVolume : 0, 
+          weight: !isNaN(userVolume) && userVolume > 0 ? userVolume : 0, 
+          confidence: 0 
+      };
+    } else {
+      qualityGrade = analysisResults.qualityClassification?.grade || 'F';
+      // Use user input if available, otherwise AI
+      drContent = !isNaN(userDRC) && userDRC > 0 ? userDRC : (analysisResults.productYieldEstimation?.dryRubberContent || 33.0);
+      volume = !isNaN(userVolume) && userVolume > 0 ? userVolume : (analysisResults.quantityEstimation?.weight || analysisResults.quantityEstimation?.volume || 0);
+      
+      // Update the analysis object with the definitive values used for calculation
+      if (!analysisResults.productYieldEstimation) analysisResults.productYieldEstimation = {};
+      analysisResults.productYieldEstimation.dryRubberContent = drContent;
+      
+      if (!analysisResults.quantityEstimation) analysisResults.quantityEstimation = {};
+      analysisResults.quantityEstimation.volume = volume;
+      analysisResults.quantityEstimation.weight = volume;
+    }
+
     // Calculate market price
     const priceEstimation = estimateLatexPrice(
-      analysisResults.qualityClassification.grade,
-      analysisResults.productYieldEstimation.dryRubberContent,
-      analysisResults.quantityEstimation.weight
+      qualityGrade,
+      drContent,
+      volume,
+      analysisResults.marketAnalysis
     );
+
+    // Ensure numeric values
+    if (isNaN(priceEstimation.totalEstimatedValue)) {
+        console.warn('⚠️ Market price calculation resulted in NaN, defaulting to 0');
+        priceEstimation.totalEstimatedValue = 0;
+        priceEstimation.pricePerKg = 0;
+    }
 
     // Create latex batch
     const latexBatch = await LatexBatch.create({
@@ -92,7 +180,8 @@ router.post('/batch', protect, upload.single('image'), async (req, res) => {
       productYieldEstimation: analysisResults.productYieldEstimation,
       productRecommendation: analysisResults.productRecommendation,
       marketPriceEstimation: priceEstimation,
-      processingStatus: 'completed',
+      aiInsights: analysisResults.aiInsights,
+      processingStatus: processingStatus,
       notes
     });
 
@@ -113,6 +202,119 @@ router.post('/batch', protect, upload.single('image'), async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Server error processing latex batch'
+    });
+  }
+});
+
+// ============================================
+// @route   POST /api/latex/:id/analyze
+// @desc    Re-analyze latex batch with latest AI models
+// @access  Private
+// ============================================
+router.post('/:id/analyze', protect, async (req, res) => {
+  try {
+    const batch = await LatexBatch.findById(req.params.id);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        error: 'Latex batch not found'
+      });
+    }
+
+    // Check authorization
+    if (batch.user.toString() !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to analyze this batch'
+      });
+    }
+
+    // Analyze latex image again
+    const analysisResults = await analyzeLatexImage(batch.imageURL);
+
+    if (analysisResults.error) {
+        return res.status(500).json({
+            success: false,
+            error: 'Re-analysis failed: ' + analysisResults.error
+        });
+    }
+
+    // Preserve User Inputs (Volume/DRC) if they were set with high confidence (User Input)
+    // or simply if they exist, because AI currently returns 0 for volume.
+    // We assume if volume > 0, it was user input or valid estimation.
+    let currentVolume = batch.quantityEstimation?.volume || 0;
+    let currentDRC = batch.productYieldEstimation?.dryRubberContent || 0;
+    let volumeConfidence = batch.quantityEstimation?.confidence || 0;
+
+    // Apply User Overrides to Analysis Results
+    if (volumeConfidence === 100 || currentVolume > 0) {
+        analysisResults.quantityEstimation = {
+            ...analysisResults.quantityEstimation,
+            volume: currentVolume,
+            weight: currentVolume,
+            confidence: 100
+        };
+    }
+    
+    // Check if DRC was user entered (confidence 100)
+    let currentDRCConfidence = batch.productYieldEstimation?.confidence || 0;
+
+    // Preserve User Input for DRC (Confidence 100)
+    if (currentDRCConfidence === 100 && currentDRC > 0) {
+         analysisResults.productYieldEstimation = {
+             ...analysisResults.productYieldEstimation,
+             dryRubberContent: currentDRC,
+             confidence: 100
+         };
+    } else if (volumeConfidence === 100 && currentDRC > 0 && currentDRC !== 33.0) {
+        // Fallback for legacy data: If volume is manual and DRC is not default, assume manual DRC
+         analysisResults.productYieldEstimation = {
+             ...analysisResults.productYieldEstimation,
+             dryRubberContent: currentDRC,
+             confidence: 100 // Upgrade to explicit confidence
+         };
+    }
+
+    // Calculate market price with final data
+    const qualityGrade = analysisResults.qualityClassification?.grade || 'F';
+    const drContent = analysisResults.productYieldEstimation?.dryRubberContent || 33.0;
+    const volume = analysisResults.quantityEstimation?.volume || 0;
+
+    console.log(`💰 Re-calculating price with: Grade=${qualityGrade}, DRC=${drContent}, Vol=${volume}`);
+
+    const priceEstimation = estimateLatexPrice(
+      qualityGrade,
+      drContent,
+      volume,
+      analysisResults.marketAnalysis
+    );
+
+    // Update batch
+    batch.colorAnalysis = analysisResults.colorAnalysis;
+    batch.qualityClassification = analysisResults.qualityClassification;
+    batch.contaminationDetection = analysisResults.contaminationDetection;
+    batch.quantityEstimation = analysisResults.quantityEstimation;
+    batch.productYieldEstimation = analysisResults.productYieldEstimation;
+    batch.productRecommendation = analysisResults.productRecommendation;
+    batch.marketPriceEstimation = priceEstimation;
+    batch.aiInsights = analysisResults.aiInsights;
+    batch.processingStatus = 'completed';
+    batch.analyzedAt = Date.now(); // Add timestamp for re-analysis
+
+    await batch.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Latex batch re-analyzed successfully',
+      data: batch
+    });
+
+  } catch (error) {
+    console.error('Re-analyze latex batch error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error analyzing latex batch'
     });
   }
 });
@@ -299,15 +501,14 @@ router.delete('/:id', protect, async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Latex batch deleted successfully',
-      data: {}
+      message: 'Latex batch deleted successfully'
     });
 
   } catch (error) {
     console.error('Delete latex batch error:', error);
     res.status(500).json({
       success: false,
-      error: 'Server error deleting batch'
+      error: 'Server error deleting latex batch'
     });
   }
 });

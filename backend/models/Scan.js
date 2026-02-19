@@ -27,6 +27,9 @@ const scanSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  processedImageURL: {
+    type: String
+  },
   cloudinaryID: {
     type: String,
     required: true
@@ -56,6 +59,7 @@ const scanSchema = new mongoose.Schema({
     healthStatus: String, // 'healthy', 'diseased'
     color: String,
     spotCount: Number,
+    detailed_analysis: mongoose.Schema.Types.Mixed,
     diseases: [{
       name: String,
       confidence: Number,
@@ -66,12 +70,17 @@ const scanSchema = new mongoose.Schema({
     name: String,
     confidence: Number,
     severity: String,
-    recommendation: String
+    recommendation: String,
+    ai_diagnosis: mongoose.Schema.Types.Mixed
   }],
   tappabilityAssessment: {
     isTappable: Boolean,
     score: Number,
     reason: String
+  },
+  productivityRecommendation: {
+    status: String,
+    suggestions: [String]
   },
   latexQualityPrediction: {
     quality: {
@@ -113,6 +122,19 @@ const scanSchema = new mongoose.Schema({
   productivityRecommendation: {
     status: String,
     suggestions: [String]
+  },
+  // AI Insights & Prompts
+  aiInsights: {
+    promptRecommendations: [String],
+    suggestions: [String],
+    analysisTimestamp: {
+      type: Date,
+      default: Date.now
+    },
+    version: {
+      type: Number,
+      default: 1
+    }
   },
   // Processing Status
   processingStatus: {

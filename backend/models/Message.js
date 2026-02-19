@@ -19,7 +19,7 @@ const messageSchema = new mongoose.Schema({
     url: String,
     publicId: String,
     name: String,
-    type: String,
+    type: { type: String },
     size: Number
   }],
   isRead: {

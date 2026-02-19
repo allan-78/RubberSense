@@ -2,7 +2,7 @@
 // 📱 Scan Detail Screen
 // ============================================
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -11,15 +11,57 @@ import {
   Image,
   TouchableOpacity,
   Dimensions,
+  Alert,
+  ActivityIndicator
 } from 'react-native';
 import { MaterialIcons, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import theme from '../styles/theme';
+import { scanAPI } from '../services/api';
 
 const { width } = Dimensions.get('window');
 
 const ScanDetailScreen = ({ route, navigation }) => {
-  const { scan } = route.params;
+  const [currentScan, setCurrentScan] = useState(route.params.scan);
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
+  
+  // Use currentScan for rendering to support updates
+  const scan = currentScan;
+
+  const handleReanalyze = async () => {
+    if (!currentScan?._id) {
+        Alert.alert("Error", "Invalid scan ID. Cannot re-analyze.");
+        return;
+    }
+
+    try {
+        console.log("🔄 Requesting re-analysis for scan:", currentScan._id);
+        setIsReanalyzing(true);
+        const res = await scanAPI.reanalyze(currentScan._id);
+        if (res.success && res.data) {
+            setCurrentScan(res.data);
+            Alert.alert("Success", "Scan re-analyzed successfully with latest AI models.");
+        }
+    } catch (error) {
+        console.error("❌ Re-analysis failed:", error);
+        const errorMessage = error.error || error.message || "Failed to re-analyze scan";
+        Alert.alert("Error", errorMessage);
+    } finally {
+        setIsReanalyzing(false);
+    }
+  };
+
+  const renderContent = (val) => {
+    if (!val) return '';
+    if (Array.isArray(val)) return val.join(', ');
+    if (typeof val === 'object') {
+        return Object.entries(val).map(([k, v]) => {
+            const vStr = Array.isArray(v) ? v.join(', ') : String(v);
+            return `${k.charAt(0).toUpperCase() + k.slice(1)}: ${vStr}`;
+        }).join('\n');
+    }
+    return String(val);
+  };
 
   const getHealthColor = (status) => {
     switch (status) {
@@ -28,6 +70,16 @@ const ScanDetailScreen = ({ route, navigation }) => {
       case 'dying': return theme.colors.warning;
       default: return theme.colors.textSecondary;
     }
+  };
+
+  const getScanHealthStatus = (scan) => {
+    if (scan.treeIdentification?.detectedPart === 'leaf' && scan.leafAnalysis?.healthStatus) {
+      return scan.leafAnalysis.healthStatus;
+    }
+    if (scan.treeIdentification?.detectedPart === 'trunk' && scan.trunkAnalysis?.healthStatus) {
+      return scan.trunkAnalysis.healthStatus;
+    }
+    return scan.tree?.healthStatus || 'unknown';
   };
 
   const InfoCard = ({ title, icon, children }) => (
@@ -77,14 +129,14 @@ const ScanDetailScreen = ({ route, navigation }) => {
           </TouchableOpacity>
 
           {/* Status Badge */}
-          <View style={[styles.statusBadge, { backgroundColor: getHealthColor(scan.tree?.healthStatus) }]}>
+          <View style={[styles.statusBadge, { backgroundColor: getHealthColor(getScanHealthStatus(scan)) }]}>
             <MaterialIcons 
-              name={scan.tree?.healthStatus === 'healthy' ? 'check-circle' : 'warning'} 
+              name={getScanHealthStatus(scan) === 'healthy' ? 'check-circle' : 'warning'} 
               size={16} 
               color="#FFF" 
             />
             <Text style={styles.statusText}>
-              {scan.tree?.healthStatus?.toUpperCase() || 'UNKNOWN'}
+              {getScanHealthStatus(scan)?.toUpperCase() || 'UNKNOWN'}
             </Text>
           </View>
 
@@ -108,6 +160,61 @@ const ScanDetailScreen = ({ route, navigation }) => {
         </View>
 
         <View style={styles.contentContainer}>
+          
+          {/* AI Re-analysis & Insights */}
+          <View style={{ marginBottom: 20 }}>
+             <TouchableOpacity 
+                style={styles.reanalyzeButton} 
+                onPress={handleReanalyze}
+                disabled={isReanalyzing}
+             >
+                {isReanalyzing ? (
+                    <ActivityIndicator color="#FFF" size="small" />
+                ) : (
+                    <>
+                        <MaterialIcons name="refresh" size={20} color="#FFF" style={{ marginRight: 8 }} />
+                        <Text style={styles.reanalyzeText}>Re-analyze with AI</Text>
+                    </>
+                )}
+             </TouchableOpacity>
+          </View>
+
+          {/* AI Insights Card */}
+          {scan.aiInsights && (
+             <InfoCard title="AI Prompt Recommendations" icon="lightbulb">
+                {scan.aiInsights.promptRecommendations?.length > 0 && (
+                    <>
+                        <Text style={[styles.detailLabel, { marginBottom: 8 }]}>Suggested Questions:</Text>
+                        {scan.aiInsights.promptRecommendations.map((prompt, index) => (
+                            <TouchableOpacity 
+                                key={index} 
+                                style={styles.promptChip}
+                                onPress={() => navigation.navigate('Chatbot', { initialPrompt: prompt })}
+                            >
+                                <MaterialIcons name="chat-bubble-outline" size={16} color={theme.colors.primary} style={{ marginRight: 6 }} />
+                                <Text style={styles.promptText}>{prompt}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </>
+                )}
+                
+                {scan.aiInsights.suggestions?.length > 0 && (
+                    <View style={{ marginTop: 12 }}>
+                        <Text style={[styles.detailLabel, { marginBottom: 8 }]}>AI Suggestions:</Text>
+                        {scan.aiInsights.suggestions.map((suggestion, index) => (
+                             <View key={index} style={styles.bulletPoint}>
+                                <MaterialIcons name="auto-awesome" size={16} color={theme.colors.secondary} />
+                                <Text style={styles.bulletText}>{suggestion}</Text>
+                             </View>
+                        ))}
+                    </View>
+                )}
+                
+                <Text style={[styles.detailLabel, { fontSize: 10, marginTop: 12, textAlign: 'right' }]}>
+                    Last analyzed: {new Date(scan.aiInsights.analysisTimestamp || scan.updatedAt).toLocaleString()} (v{scan.aiInsights.version || 1})
+                </Text>
+             </InfoCard>
+          )}
           
           {/* 1. Identification */}
           <InfoCard title="Tree Identification" icon="search">
@@ -147,7 +254,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
               />
               <DetailRow 
                 label="Diseases" 
-                value={scan.leafAnalysis?.diseases?.length > 0 ? scan.leafAnalysis.diseases.join(', ') : 'None'} 
+                value={scan.leafAnalysis?.diseases?.length > 0 ? scan.leafAnalysis.diseases.map(d => d.name).join(', ') : 'None'} 
                 isLast
               />
             </InfoCard>
@@ -169,14 +276,88 @@ const ScanDetailScreen = ({ route, navigation }) => {
               scan.diseaseDetection.map((disease, index) => (
                 <View key={index} style={styles.diseaseItem}>
                   <View style={styles.diseaseHeader}>
-                    <Text style={styles.diseaseName}>{disease.name}</Text>
+                    <View>
+                      <Text style={styles.diseaseName}>{disease.name}</Text>
+                      <Text style={{ fontSize: 12, color: '#888' }}>
+                        Confidence: {typeof disease.confidence === 'number' ? disease.confidence.toFixed(1) : disease.confidence}%
+                      </Text>
+                    </View>
                     <View style={[styles.severityBadge, { 
-                      backgroundColor: disease.severity === 'high' ? theme.colors.error : 
-                                     disease.severity === 'medium' ? theme.colors.warning : theme.colors.success 
+                      backgroundColor: disease.severity === 'critical' ? theme.colors.error :
+                                     disease.severity === 'high' ? theme.colors.error : 
+                                     disease.severity === 'medium' || disease.severity === 'moderate' ? theme.colors.warning : theme.colors.success 
                     }]}>
                       <Text style={styles.severityText}>{disease.severity}</Text>
                     </View>
                   </View>
+                  
+                  {/* AI Diagnosis Section */}
+                  {disease.ai_diagnosis && (
+                    <View style={{ marginBottom: 10, marginTop: 5, padding: 10, backgroundColor: '#f0f9ff', borderRadius: 8 }}>
+                        <Text style={[styles.diseaseRecTitle, { color: theme.colors.primary, marginBottom: 5 }]}>AI Expert Diagnosis:</Text>
+                        {typeof disease.ai_diagnosis === 'object' ? (
+                            <View>
+                                {disease.ai_diagnosis.diagnosis && (
+                                    <Text style={styles.diseaseRec}><Text style={{fontWeight: 'bold'}}>Diagnosis:</Text> {disease.ai_diagnosis.diagnosis}</Text>
+                                )}
+                                {disease.ai_diagnosis.severity_reasoning && (
+                                    <Text style={styles.diseaseRec}><Text style={{fontWeight: 'bold'}}>Severity:</Text> {disease.ai_diagnosis.severity_reasoning}</Text>
+                                )}
+                                {disease.ai_diagnosis.treatment && (
+                                    <Text style={styles.diseaseRec}><Text style={{fontWeight: 'bold'}}>Treatment:</Text> {renderContent(disease.ai_diagnosis.treatment)}</Text>
+                                )}
+                                {disease.ai_diagnosis.prevention && (
+                                    <Text style={styles.diseaseRec}><Text style={{fontWeight: 'bold'}}>Prevention:</Text> {renderContent(disease.ai_diagnosis.prevention)}</Text>
+                                )}
+                            </View>
+                        ) : (
+                            <Text style={styles.diseaseRec}>{disease.ai_diagnosis}</Text>
+                        )}
+                    </View>
+                  )}
+
+                  {/* Cause Section */}
+                  {disease.cause && (
+                    <View style={{ marginBottom: 10 }}>
+                        <Text style={styles.diseaseRecTitle}>Cause:</Text>
+                        <Text style={styles.diseaseRec}>{disease.cause}</Text>
+                    </View>
+                  )}
+
+                  {/* Prevention Section */}
+                  {disease.prevention && (
+                     <View style={{ marginBottom: 10 }}>
+                        <Text style={styles.diseaseRecTitle}>Prevention:</Text>
+                        {Array.isArray(disease.prevention) ? (
+                            disease.prevention.map((p, i) => (
+                                <View key={i} style={styles.bulletPoint}>
+                                    <MaterialIcons name="chevron-right" size={14} color={theme.colors.textSecondary} />
+                                    <Text style={styles.bulletText}>{p}</Text>
+                                </View>
+                            ))
+                        ) : (
+                            <Text style={styles.diseaseRec}>{disease.prevention}</Text>
+                        )}
+                     </View>
+                  )}
+
+                  {/* Treatment Section */}
+                  {disease.treatment && (
+                     <View style={{ marginBottom: 10 }}>
+                        <Text style={styles.diseaseRecTitle}>Treatment:</Text>
+                        {Array.isArray(disease.treatment) ? (
+                            disease.treatment.map((t, i) => (
+                                <View key={i} style={styles.bulletPoint}>
+                                    <MaterialIcons name="chevron-right" size={14} color={theme.colors.textSecondary} />
+                                    <Text style={styles.bulletText}>{t}</Text>
+                                </View>
+                            ))
+                        ) : (
+                            <Text style={styles.diseaseRec}>{disease.treatment}</Text>
+                        )}
+                     </View>
+                  )}
+
                   <Text style={styles.diseaseRecTitle}>Recommendation:</Text>
                   <Text style={styles.diseaseRec}>{disease.recommendation}</Text>
                 </View>
@@ -236,10 +417,26 @@ const ScanDetailScreen = ({ route, navigation }) => {
                 />
                 <DetailRow 
                   label="Rec. Product" 
-                  value={scan.productYieldEstimation?.productType || "N/A"} 
+                  value={scan.productRecommendation?.recommendedProduct || scan.productYieldEstimation?.productType || "N/A"} 
                   isLast
                 />
               </InfoCard>
+
+              {/* Latex Processing Advice */}
+              {scan.productRecommendation?.reason && (
+                  <InfoCard title="Processing Advice" icon="science">
+                      <View style={{ marginBottom: 10 }}>
+                          <Text style={styles.detailLabel}>Recommendation:</Text>
+                          <Text style={styles.diseaseRec}>{scan.productRecommendation.reason}</Text>
+                      </View>
+                      {scan.productRecommendation.preservation && (
+                          <View>
+                              <Text style={styles.detailLabel}>Preservation:</Text>
+                              <Text style={styles.diseaseRec}>{scan.productRecommendation.preservation}</Text>
+                          </View>
+                      )}
+                  </InfoCard>
+              )}
             </>
           )}
 
@@ -256,10 +453,49 @@ const ScanDetailScreen = ({ route, navigation }) => {
             </InfoCard>
           )}
 
+           {/* AI Insights (Persisted) */}
+           {scan.aiInsights && (
+             <InfoCard title="AI Insights" icon="psychology">
+                 {scan.aiInsights.suggestions && scan.aiInsights.suggestions.length > 0 && (
+                     <View style={{ marginBottom: 15 }}>
+                         <Text style={styles.detailLabel}>Suggestions:</Text>
+                         {scan.aiInsights.suggestions.map((s, i) => (
+                             <View key={i} style={styles.bulletPoint}>
+                                 <MaterialIcons name="lightbulb-outline" size={16} color={theme.colors.warning} />
+                                 <Text style={styles.bulletText}>{s}</Text>
+                             </View>
+                         ))}
+                     </View>
+                 )}
+                 
+                 {scan.aiInsights.promptRecommendations && scan.aiInsights.promptRecommendations.length > 0 && (
+                     <View>
+                         <Text style={styles.detailLabel}>Ask AI Assistant:</Text>
+                         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 5 }}>
+                             {scan.aiInsights.promptRecommendations.map((p, i) => (
+                                 <View key={i} style={{ 
+                                     backgroundColor: theme.colors.surface, 
+                                     borderWidth: 1, 
+                                     borderColor: theme.colors.primary, 
+                                     borderRadius: 20, 
+                                     paddingHorizontal: 12, 
+                                     paddingVertical: 6, 
+                                     marginRight: 8, 
+                                     marginBottom: 8 
+                                 }}>
+                                     <Text style={{ color: theme.colors.primary, fontSize: 12 }}>{p}</Text>
+                                 </View>
+                             ))}
+                         </View>
+                     </View>
+                 )}
+             </InfoCard>
+           )}
+
            {/* 6. Productivity */}
            {scan.productivityRecommendation && (
              <InfoCard title="Productivity & Recommendations" icon="trending-up">
-              <DetailRow label="Status" value={scan.productivityRecommendation?.status?.toUpperCase()} />
+              <DetailRow label="Status" value={scan.productivityRecommendation?.status?.replace('_', ' ').toUpperCase()} />
               <View style={{ marginTop: 10 }}>
                 <Text style={styles.detailLabel}>Suggestions:</Text>
                 {scan.productivityRecommendation?.suggestions?.map((suggestion, index) => (
@@ -481,7 +717,41 @@ const styles = StyleSheet.create({
   noDataText: {
     color: theme.colors.textLight,
     fontStyle: 'italic',
-  }
+  },
+  reanalyzeButton: {
+    backgroundColor: theme.colors.primary,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    shadowColor: theme.colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  reanalyzeText: {
+    color: '#FFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  promptChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.surfaceHighlight,
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  promptText: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
 });
 
 export default ScanDetailScreen;

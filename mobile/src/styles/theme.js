@@ -1,52 +1,47 @@
 // ============================================
-// 🎨 Theme - Colors & Styles
+// 🎨 Theme - Minimalist 4-Color Palette
 // ============================================
 
 export const theme = {
   colors: {
-    // Primary Brand Colors (Olive Palette)
-    primary: '#22C55E', // Dark Olive Green
-    primaryDark: '#16A34A', // Deep Olive
-    primaryLight: '#86EFAC', // Olive Drab
-    secondary: '#0EA5E9', // Dark Sea Green
-    accent: '#F59E0B', // Dark Khaki
-
-    // Backgrounds
-    background: '#F8FAFC', // Off-white/Ivory with subtle olive tint
-    surface: '#FFFFFF',
-    surfaceHighlight: '#F1F5F9',
+    // Core 4-Color Palette
+    primary: '#2F4F4F',      // 1. Deep Green / Dark Slate
+    secondary: '#8FBC8F',    // 2. Sage / Soft Accent
+    background: '#F9FAF9',   // 3. Clean Light Background
+    text: '#2C3E50',         // 4. Dark Charcoal Text
     
-    // Text
-    text: '#0F172A', // Very Dark Olive/Black
-    textSecondary: '#475569', // Muted Olive Gray
-    textLight: '#94A3B8', // Light Olive Gray
+    // Derivatives (maintained for compatibility but derived from palette)
+    primaryDark: '#1E3333',
+    primaryLight: '#A3CFA3',
+    surface: '#FFFFFF',      // White is implied in 4-color designs for cards
+    surfaceHighlight: '#F2F5F2',
+    
+    textSecondary: '#5D6D7E', // Muted version of text
+    textLight: '#95A5A6',
     textInverse: '#FFFFFF',
     
-    // Status
-    success: '#22C55E', // Olive Drab
-    warning: '#F59E0B', // Dark Khaki
-    error: '#EF4444', // Saddle Brown (from palette)
-    info: '#0EA5E9', // Dark Sea Green
+    // Status (Functional colors - kept minimal)
+    success: '#8FBC8F', // Use Secondary for success to maintain palette
+    warning: '#E67E22', // Muted Orange
+    error: '#C0392B',   // Muted Red
+    info: '#2980B9',    // Muted Blue
     
     // UI Elements
-    border: '#E2E8F0', // Beige/Olive tint border
-    borderLight: '#F1F5F9',
-    inputBg: '#F1F5F9',
+    border: '#E2E8F0',
+    borderLight: '#F0F3F4',
+    inputBg: '#F4F6F6',
     
-    // Overlay & Glass
-    overlay: 'rgba(15, 23, 42, 0.6)', // Dark Olive overlay
-    overlayDark: 'rgba(15, 23, 42, 0.8)',
-    glass: 'rgba(255, 255, 255, 0.85)',
-    glassBorder: 'rgba(255, 255, 255, 0.5)',
+    // Overlay
+    overlay: 'rgba(47, 79, 79, 0.6)',
+    glass: 'rgba(255, 255, 255, 0.95)',
   },
   
   gradients: {
-    primary: ['#22C55E', '#16A34A'], // Dark Olive to Olive Drab
-    secondary: ['#0EA5E9', '#38BDF8'], // Olive Drab to Sea Green
-    success: ['#22C55E', '#4ADE80'],
-    dark: ['#0F172A', '#1E293B'],
-    light: ['#FFFFFF', '#F8FAFC'],
-    card: ['#FFFFFF', '#F1F5F9'],
+    // Minimalist gradients (very subtle)
+    primary: ['#2F4F4F', '#3A6060'], 
+    secondary: ['#8FBC8F', '#9FC99F'],
+    light: ['#F9FAF9', '#FFFFFF'],
+    card: ['#FFFFFF', '#FFFFFF'], // Flat cards
   },
   
   spacing: {
@@ -56,14 +51,13 @@ export const theme = {
     lg: 24,
     xl: 32,
     xxl: 48,
-    xxxl: 64,
   },
   
   borderRadius: {
-    sm: 8,
-    md: 12,
-    lg: 20,
-    xl: 32,
+    sm: 6,
+    md: 10,
+    lg: 16,
+    xl: 24,
     full: 9999,
   },
   
@@ -72,9 +66,9 @@ export const theme = {
     sm: 14,
     md: 16,
     lg: 18,
-    xl: 24,
-    xxl: 32,
-    display: 42,
+    xl: 22, // Reduced from 24/32 for minimalism
+    xxl: 28,
+    display: 36,
   },
   
   fontWeight: {
@@ -82,37 +76,37 @@ export const theme = {
     medium: '500',
     semibold: '600',
     bold: '700',
-    extrabold: '800',
   },
   
+  // Minimalist Shadows
   shadows: {
     sm: {
-      shadowColor: '#0F172A',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.06,
-      shadowRadius: 6,
-      elevation: 2,
+      shadowColor: '#2C3E50',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 2,
+      elevation: 1,
     },
     md: {
-      shadowColor: '#0F172A',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.1,
-      shadowRadius: 12,
-      elevation: 4,
+      shadowColor: '#2C3E50',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.08,
+      shadowRadius: 4,
+      elevation: 2,
     },
     lg: {
-      shadowColor: '#0F172A',
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.12,
-      shadowRadius: 20,
-      elevation: 8,
+      shadowColor: '#2C3E50',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 4,
     },
     glow: {
-      shadowColor: '#22C55E',
+      shadowColor: '#8FBC8F',
       shadowOffset: { width: 0, height: 0 },
-      shadowOpacity: 0.25,
-      shadowRadius: 14,
-      elevation: 5,
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      elevation: 3,
     }
   },
 };

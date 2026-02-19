@@ -15,6 +15,7 @@ const chatRoutes = require('./routes/chat');
 const postRoutes = require('./routes/posts');
 const userRoutes = require('./routes/users');
 const messageRoutes = require('./routes/messages');
+const marketRoutes = require('./routes/market');
 
 // Initialize Express app
 const app = express();
@@ -22,6 +23,12 @@ const app = express();
 // ============================================
 // MIDDLEWARE SETUP
 // ============================================
+
+// Request Logging Middleware
+app.use((req, res, next) => {
+  console.log(`📨 [${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
 
 // Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
@@ -57,6 +64,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/market', marketRoutes);
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE

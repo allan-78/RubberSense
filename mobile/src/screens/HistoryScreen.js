@@ -16,18 +16,55 @@ import {
   Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { scanAPI, latexAPI } from '../services/api';
 import theme from '../styles/theme';
 
 const HistoryScreen = ({ navigation, route }) => {
-  const { initialTab } = route.params || {};
+  const { initialTab, newScan, refreshTimestamp } = route.params || {};
   const [activeTab, setActiveTab] = useState(initialTab || 'trees'); // 'trees' or 'latex'
   const [scans, setScans] = useState([]);
   const [latexBatches, setLatexBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedFilter, setSelectedFilter] = useState('all');
+  
+  // Filter States
+  const [filterType, setFilterType] = useState('all'); // 'all', 'trunk', 'leaf'
+  const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'healthy', 'diseased', 'dying'
+  
+  // Latex Filter States
+  const [filterGrade, setFilterGrade] = useState('all'); // 'all', 'A', 'B', 'C', 'D', 'F'
+  const [filterContamination, setFilterContamination] = useState('all'); // 'all', 'none', 'low', 'medium', 'high'
+
+  // Handle new scan from CameraScreen immediately
+  useEffect(() => {
+    if (newScan && refreshTimestamp) {
+        if (activeTab === 'trees' && (!newScan.scanType || newScan.scanType === 'tree')) {
+             setScans(prev => {
+                 // Prevent duplicates
+                 if (prev.find(s => s._id === newScan._id)) return prev;
+                 return [newScan, ...prev];
+             });
+             // Ensure loading is false so we see the result immediately
+             setLoading(false);
+        } else if (activeTab === 'latex' && (newScan.scanType === 'latex' || newScan.batchID)) {
+             setLatexBatches(prev => {
+                 if (prev.find(b => b._id === newScan._id)) return prev;
+                 return [newScan, ...prev];
+             });
+             setLoading(false);
+        }
+    }
+    
+    // Trigger background refresh to ensure backend sync
+    if (refreshTimestamp) {
+        console.log('🔄 Triggering background refresh due to new scan...');
+        // Small delay to allow backend indexing if needed, though usually immediate
+        setTimeout(() => {
+            loadData();
+        }, 500);
+    }
+  }, [newScan, refreshTimestamp, activeTab]);
 
   useEffect(() => {
     if (initialTab) {
@@ -37,12 +74,22 @@ const HistoryScreen = ({ navigation, route }) => {
 
   useFocusEffect(
     useCallback(() => {
+      // If we have a new scan pending (via optimistic update), 
+      // skip this immediate load and let the useEffect handle the delayed refresh.
+      if (route.params?.newScan && route.params?.refreshTimestamp) {
+          const timeDiff = Date.now() - route.params.refreshTimestamp;
+          if (timeDiff < 2000) {
+              console.log('⏳ Skipping focus load due to pending new scan...');
+              return;
+          }
+      }
       loadData();
-    }, [activeTab])
+    }, [activeTab, route.params])
   );
 
   const loadData = async () => {
-    setLoading(true);
+    // Don't set loading(true) here to allow silent background refresh
+    // We only want spinner on explicit actions (tab change, pull refresh)
     try {
       if (activeTab === 'trees') {
         const response = await scanAPI.getAll();
@@ -101,12 +148,54 @@ const HistoryScreen = ({ navigation, route }) => {
     }
   };
 
+  const getScanHealthStatus = (scan) => {
+    if (scan.treeIdentification?.detectedPart === 'leaf' && scan.leafAnalysis?.healthStatus) {
+      return scan.leafAnalysis.healthStatus;
+    }
+    if (scan.treeIdentification?.detectedPart === 'trunk' && scan.trunkAnalysis?.healthStatus) {
+      return scan.trunkAnalysis.healthStatus;
+    }
+    return scan.tree?.healthStatus || 'unknown';
+  };
+
   const filteredScans = activeTab === 'trees' 
     ? scans.filter((scan) => {
-        if (selectedFilter === 'all') return true;
-        return scan.tree?.healthStatus === selectedFilter;
+        // 1. Filter by Type
+        const scanPart = scan.treeIdentification?.detectedPart || 'whole_tree';
+        // Map 'whole_tree' to 'trunk' context if needed, or keep separate. 
+        // Assuming 'trunk' and 'leaf' are the main ones.
+        // If filterType is 'trunk', we allow 'trunk' and 'whole_tree' (legacy) or just 'trunk'?
+        // Let's be strict: 'trunk' matches 'trunk', 'leaf' matches 'leaf'.
+        
+        const typeMatch = 
+          filterType === 'all' ? true :
+          filterType === 'trunk' ? scanPart === 'trunk' :
+          filterType === 'leaf' ? scanPart === 'leaf' : true;
+
+        if (!typeMatch) return false;
+
+        // 2. Filter by Status
+        if (filterStatus === 'all') return true;
+        const healthStatus = getScanHealthStatus(scan);
+        return healthStatus === filterStatus;
       })
-    : latexBatches;
+    : latexBatches.filter((batch) => {
+        // 1. Filter by Grade
+        if (filterGrade !== 'all') {
+            const grade = batch.qualityClassification?.grade;
+            if (grade !== filterGrade) return false;
+        }
+
+        // 2. Filter by Contamination
+        if (filterContamination !== 'all') {
+            const contamination = batch.contaminationDetection?.contaminationLevel;
+            // 'none' might be stored as 'none' or null/undefined if clean
+            if (filterContamination === 'none' && !contamination) return true; 
+            if (contamination !== filterContamination) return false;
+        }
+        
+        return true;
+    });
 
   const renderLatexItem = ({ item }) => (
     <TouchableOpacity 
@@ -198,16 +287,16 @@ const HistoryScreen = ({ navigation, route }) => {
             <View
               style={[
                 styles.statusBadge,
-                { backgroundColor: getHealthColor(item.tree?.healthStatus) + '15' },
+                { backgroundColor: getHealthColor(getScanHealthStatus(item)) + '15' },
               ]}
             >
               <MaterialIcons 
-                name={item.tree?.healthStatus === 'healthy' ? 'check-circle' : item.tree?.healthStatus === 'diseased' ? 'error-outline' : 'warning'}
+                name={getScanHealthStatus(item) === 'healthy' ? 'check-circle' : getScanHealthStatus(item) === 'diseased' ? 'error-outline' : 'warning'}
                 size={12}
-                color={getHealthColor(item.tree?.healthStatus)}
+                color={getHealthColor(getScanHealthStatus(item))}
               />
-              <Text style={[styles.statusText, { color: getHealthColor(item.tree?.healthStatus) }]}>
-                {item.tree?.healthStatus || 'Unknown'}
+              <Text style={[styles.statusText, { color: getHealthColor(getScanHealthStatus(item)) }]}>
+                {getScanHealthStatus(item) || 'Unknown'}
               </Text>
             </View>
           </View>
@@ -237,41 +326,158 @@ const HistoryScreen = ({ navigation, route }) => {
       <View style={styles.tabContainer}>
         <TouchableOpacity 
           style={[styles.tabButton, activeTab === 'trees' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('trees')}
+          onPress={() => {
+             if (activeTab !== 'trees') setLoading(true);
+             setActiveTab('trees');
+          }}
         >
           <Text style={[styles.tabText, activeTab === 'trees' && styles.tabTextActive]}>Trees</Text>
         </TouchableOpacity>
         <TouchableOpacity 
           style={[styles.tabButton, activeTab === 'latex' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('latex')}
+          onPress={() => {
+             if (activeTab !== 'latex') setLoading(true);
+             setActiveTab('latex');
+          }}
         >
           <Text style={[styles.tabText, activeTab === 'latex' && styles.tabTextActive]}>Latex</Text>
         </TouchableOpacity>
       </View>
 
-      {activeTab === 'trees' && (
-        <View style={styles.filterContainer}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {['all', 'healthy', 'diseased', 'dying'].map((filter) => (
-              <TouchableOpacity
-                key={filter}
-                style={[
-                  styles.filterChip,
-                  selectedFilter === filter && styles.filterChipActive,
-                ]}
-                onPress={() => setSelectedFilter(filter)}
-              >
-                <Text
+      {activeTab === 'trees' ? (
+        <View style={styles.filtersWrapper}>
+          {/* Type Filters */}
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Type:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
+              {[
+                { id: 'all', label: 'All', icon: 'dashboard', IconComponent: MaterialIcons },
+                { id: 'trunk', label: 'Trunk', icon: 'tree', IconComponent: MaterialCommunityIcons },
+                { id: 'leaf', label: 'Leaf', icon: 'leaf', IconComponent: MaterialCommunityIcons },
+              ].map((item) => (
+                <TouchableOpacity
+                  key={item.id}
                   style={[
-                    styles.filterText,
-                    selectedFilter === filter && styles.filterTextActive,
+                    styles.typeFilterChip,
+                    filterType === item.id && styles.typeFilterChipActive,
                   ]}
+                  onPress={() => setFilterType(item.id)}
                 >
-                  {filter.charAt(0).toUpperCase() + filter.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+                  <item.IconComponent 
+                    name={item.icon} 
+                    size={18} 
+                    color={filterType === item.id ? '#FFF' : theme.colors.textSecondary} 
+                  />
+                  <Text
+                    style={[
+                      styles.typeFilterText,
+                      filterType === item.id && styles.typeFilterTextActive,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Status Filters */}
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Status:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
+              {[
+                  { id: 'all', label: 'All' },
+                  { id: 'healthy', label: 'Healthy' },
+                  { id: 'diseased', label: 'Diseased' },
+                  { id: 'dying', label: 'Dying' },
+              ].map((filter) => (
+                <TouchableOpacity
+                  key={filter.id}
+                  style={[
+                    styles.statusFilterChip,
+                    filterStatus === filter.id && styles.statusFilterChipActive,
+                  ]}
+                  onPress={() => setFilterStatus(filter.id)}
+                >
+                  <Text
+                    style={[
+                      styles.statusFilterText,
+                      filterStatus === filter.id && styles.statusFilterTextActive,
+                    ]}
+                  >
+                    {filter.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.filtersWrapper}>
+          {/* Grade Filters */}
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Grade:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'A', label: 'Grade A' },
+                { id: 'B', label: 'Grade B' },
+                { id: 'C', label: 'Grade C' },
+                { id: 'D', label: 'Grade D' },
+                { id: 'F', label: 'Grade F' },
+              ].map((item) => (
+                <TouchableOpacity
+                  key={item.id}
+                  style={[
+                    styles.statusFilterChip,
+                    filterGrade === item.id && styles.statusFilterChipActive,
+                  ]}
+                  onPress={() => setFilterGrade(item.id)}
+                >
+                  <Text
+                    style={[
+                      styles.statusFilterText,
+                      filterGrade === item.id && styles.statusFilterTextActive,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Contamination Filters */}
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Dirt:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
+              {[
+                  { id: 'all', label: 'All' },
+                  { id: 'none', label: 'Clean' },
+                  { id: 'low', label: 'Low' },
+                  { id: 'medium', label: 'Medium' },
+                  { id: 'high', label: 'High' },
+              ].map((filter) => (
+                <TouchableOpacity
+                  key={filter.id}
+                  style={[
+                    styles.statusFilterChip,
+                    filterContamination === filter.id && styles.statusFilterChipActive,
+                  ]}
+                  onPress={() => setFilterContamination(filter.id)}
+                >
+                  <Text
+                    style={[
+                      styles.statusFilterText,
+                      filterContamination === filter.id && styles.statusFilterTextActive,
+                    ]}
+                  >
+                    {filter.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
         </View>
       )}
 
@@ -384,31 +590,72 @@ const styles = StyleSheet.create({
   },
 
   // Filters
-  filterContainer: {
-    flexDirection: 'row',
+  filtersWrapper: {
     paddingHorizontal: theme.spacing.lg,
     marginBottom: theme.spacing.md,
+    gap: 12,
   },
-  filterChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: theme.colors.surface,
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  filterLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.textSecondary,
     marginRight: 8,
+    minWidth: 50,
+  },
+  filterScrollContent: {
+    paddingRight: 16,
+    gap: 8,
+  },
+  
+  // Type Chips (Icons)
+  typeFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: theme.colors.border,
+    gap: 6,
   },
-  filterChipActive: {
+  typeFilterChipActive: {
     backgroundColor: theme.colors.primary,
     borderColor: theme.colors.primary,
   },
-  filterText: {
+  typeFilterText: {
     fontSize: 13,
+    fontWeight: '600',
     color: theme.colors.textSecondary,
-    fontWeight: '500',
   },
-  filterTextActive: {
+  typeFilterTextActive: {
     color: '#FFF',
+  },
+
+  // Status Chips (Text only, smaller)
+  statusFilterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: theme.colors.inputBg,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  statusFilterChipActive: {
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.primary,
+  },
+  statusFilterText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: theme.colors.textSecondary,
+  },
+  statusFilterTextActive: {
+    color: theme.colors.primary,
     fontWeight: '600',
   },
 

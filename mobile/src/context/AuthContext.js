@@ -4,7 +4,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authAPI, API_URL } from '../services/api';
+import { authAPI, userAPI, API_URL } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -223,6 +223,10 @@ export const AuthProvider = ({ children }) => {
     try {
       await AsyncStorage.removeItem('token');
       await AsyncStorage.removeItem('user');
+      // Also reset onboarding so user goes back to onboarding screen
+      await AsyncStorage.removeItem('hasSeenOnboarding');
+      setHasSeenOnboarding(false);
+      
       setUser(null);
     } catch (error) {
       console.log('Logout error:', error);
@@ -255,6 +259,31 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const updateProfile = async (formData) => {
+    try {
+      const response = await userAPI.updateProfile(formData);
+      // API returns { success: true, data: user, message: '...' }
+      // Our api interceptor returns response.data directly.
+      // Wait, api interceptor returns response.data.
+      // If backend sends res.json({ success: true, ... }), then response (which is response.data) is { success: true, ... }
+      // So response.data is the user object.
+      
+      if (response.success && response.data) {
+        const updatedUser = response.data;
+        await AsyncStorage.setItem('user', JSON.stringify(updatedUser));
+        setUser(updatedUser);
+        return { success: true, user: updatedUser };
+      }
+      return { success: false, error: response.error || 'Update failed' };
+    } catch (error) {
+      console.log('Update profile error:', error);
+      return { 
+        success: false, 
+        error: error.response?.data?.error || error.message || 'Failed to update profile' 
+      };
+    }
+  };
+
   const value = {
     user,
     loading,
@@ -264,6 +293,7 @@ export const AuthProvider = ({ children }) => {
     resendVerificationEmail,
     isAuthenticated: !!user,
     refreshUser,
+    updateProfile,
     updateFollowingOptimistic,
     hasSeenOnboarding,
     completeOnboarding,

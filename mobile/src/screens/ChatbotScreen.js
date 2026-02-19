@@ -8,7 +8,8 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator
+  ActivityIndicator,
+  ScrollView
 } from 'react-native';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,6 +29,15 @@ const BAD_WORDS = [
   'motherfucker',
   'slut',
   'whore',
+];
+
+const SUGGESTIONS = [
+  "How to treat leaf blight?",
+  "Current rubber market price",
+  "Best time to tap rubber?",
+  "Signs of root disease",
+  "How to increase latex yield?",
+  "Fertilizer recommendations"
 ];
 
 const hashBadWords = (text = '') => {
@@ -127,7 +137,7 @@ const ChatbotScreen = ({ navigation }) => {
   return (
     <KeyboardAvoidingView 
       style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
       <LinearGradient
@@ -155,6 +165,7 @@ const ChatbotScreen = ({ navigation }) => {
       {/* Chat Area */}
       <FlatList
         ref={flatListRef}
+        style={{ flex: 1 }}
         data={messages}
         renderItem={renderMessage}
         keyExtractor={item => item.id}
@@ -175,7 +186,28 @@ const ChatbotScreen = ({ navigation }) => {
       />
 
       {/* Input Area */}
-      <View style={styles.inputContainer}>
+      <View>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          contentContainerStyle={styles.suggestionsContainer}
+        >
+          {SUGGESTIONS.map((suggestion, index) => (
+            <TouchableOpacity 
+              key={index} 
+              style={styles.suggestionChip}
+              onPress={() => {
+                setInputText(suggestion);
+                // Optional: Automatically send if preferred
+                // handleSend(suggestion); 
+              }}
+            >
+              <Text style={styles.suggestionText}>{suggestion}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <View style={styles.inputContainer}>
         <TouchableOpacity style={styles.attachButton}>
           <MaterialIcons name="add" size={24} color={theme.colors.primary} />
         </TouchableOpacity>
@@ -194,6 +226,7 @@ const ChatbotScreen = ({ navigation }) => {
         >
           <Ionicons name="send" size={20} color="#FFF" />
         </TouchableOpacity>
+      </View>
       </View>
     </KeyboardAvoidingView>
   );
@@ -351,6 +384,30 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  suggestionsContainer: {
+    paddingHorizontal: 10,
+    paddingBottom: 10,
+    backgroundColor: 'transparent',
+  },
+  suggestionChip: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  suggestionText: {
+    fontSize: 13,
+    color: theme.colors.primary,
+    fontWeight: '600',
   },
 });
 

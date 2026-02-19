@@ -1,13 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 
-// Puter.js initialization for Node.js
-const { init } = require('@heyputer/puter.js/src/init.cjs');
-// Initialize Puter with auth token from environment variables
-const puter = init(process.env.PUTER_AUTH_TOKEN);
-
-// Helper to check if message is relevant (Deprecated/Unused)
-// const isRelevant = (text) => { ... };
+// Groq API Key
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 // POST /api/chat/message
 router.post('/message', async (req, res) => {
@@ -18,35 +14,29 @@ router.post('/message', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // 1. Local Filtering (Disabled for general chat support)
-    // if (!isRelevant(message)) { ... }
-    
-    // 2. Call Puter.js AI
     try {
-        // Completely open system prompt to allow any conversation
-        const systemPrompt = "You are a friendly and helpful AI assistant for the RubberSense app. You are capable of answering any question, engaging in casual conversation, and helping with general tasks. You also have expert knowledge about rubber tree farming, diseases, and market prices, which you should use when relevant. Be polite, concise, and helpful.";
-        
-        // Puter AI Chat
-        // Depending on the exact version of puter.js, the API might be puter.ai.chat(message) or puter.ai.chat(messages_array)
-        // We will try the simple text interface first or the object interface.
-        // Documentation suggests: puter.ai.chat("Hello") returns a response object or string.
-        
-        const response = await puter.ai.chat(`${systemPrompt}\n\nUser: ${message}`);
-        
-        let botResponseText = "";
-        if (typeof response === 'string') {
-            botResponseText = response;
-        } else if (response && response.message && response.message.content) {
-            botResponseText = response.message.content;
-        } else if (response && response.text) {
-             botResponseText = response.text;
-        } else {
-            // Fallback if response structure is unknown
-            botResponseText = JSON.stringify(response);
-        }
+        const systemPrompt = "You are an expert AI assistant for RubberSense, a dedicated application for rubber tree farming. Your SOLE purpose is to assist users with topics related to rubber trees (Hevea brasiliensis), latex production, plant diseases, plantation management, and agricultural market trends for rubber. You MUST strictly adhere to the following rules: 1. If a user asks about rubber trees, diseases, soil, weather impacts on tapping, or market prices, provide a helpful, expert response. 2. If a user asks about ANY topic unrelated to rubber farming (e.g., general news, coding, math, entertainment, personal advice), you must POLITELY REFUSE to answer and remind them that you can only assist with rubber tree-related queries. Example refusal: 'I specialize in rubber tree farming and cannot assist with [topic]. How can I help you with your plantation today?' 3. Be concise and professional.";
 
-        // Clean up response if it includes "Assistant:" prefix
-        botResponseText = botResponseText.replace(/^Assistant:\s*/i, '');
+        const response = await axios.post(
+            'https://api.groq.com/openai/v1/chat/completions',
+            {
+                model: "llama-3.3-70b-versatile",
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: message }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${GROQ_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        const botResponseText = response.data.choices[0]?.message?.content || "I'm not sure how to respond to that.";
 
         res.json({
             response: botResponseText,
@@ -55,20 +45,10 @@ router.post('/message', async (req, res) => {
         });
 
     } catch (aiError) {
-        console.error("Puter AI Error:", aiError);
+        console.error("Groq AI Error:", aiError.response?.data || aiError.message);
         
-        // Fallback to keyword-based logic if AI fails
-        let botResponseText = "I'm having trouble connecting to my AI brain right now. ";
-        
-        const lowerInput = message.toLowerCase();
-        if (lowerInput.includes('hello') || lowerInput.includes('hi')) {
-            botResponseText += "Hi! How can I help you today?";
-        } else {
-             botResponseText += "Please try again later.";
-        }
-
         res.json({
-            response: botResponseText,
+            response: "I'm having trouble connecting to my AI brain right now. Please try again later.",
             sender: 'bot',
             timestamp: new Date(),
             error: "AI_unavailable"

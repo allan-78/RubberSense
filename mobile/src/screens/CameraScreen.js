@@ -1,8 +1,8 @@
 // ============================================
-// Camera & Scan Screen
+// Camera & Scan Screen - PROFESSIONAL REDESIGN
 // ============================================
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,24 +16,31 @@ import {
   Modal,
   FlatList,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import { MaterialIcons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
+import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+
 import { scanAPI, treeAPI, latexAPI } from '../services/api';
 import theme from '../styles/theme';
 import CustomButton from '../components/CustomButton';
 import { useAuth } from '../context/AuthContext';
 
+const { width, height } = Dimensions.get('window');
+
 const CameraScreen = ({ navigation }) => {
   const { user, resendVerificationEmail } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [cameraRef, setCameraRef] = useState(null);
+  const cameraRef = useRef(null);
+  const [isCameraReady, setIsCameraReady] = useState(false);
 
   const [image, setImage] = useState(null);
+  const [imageKey, setImageKey] = useState(0); // Add key for forcing re-render
   const [uploading, setUploading] = useState(false);
   const [resending, setResending] = useState(false);
   const [selectedTree, setSelectedTree] = useState(null);
@@ -43,31 +50,33 @@ const CameraScreen = ({ navigation }) => {
   const [progress, setProgress] = useState(0);
   const [scanResult, setScanResult] = useState(null);
   
-  // New state for Latex Mode
+  // Latex Mode State
   const [scanType, setScanType] = useState('tree'); // 'tree' or 'latex'
-  const [treePart, setTreePart] = useState('trunk'); // 'trunk' or 'leaf' (only for tree mode)
+  const [treePart, setTreePart] = useState('trunk'); // 'trunk' or 'leaf'
   const [batchID, setBatchID] = useState('');
-  const [isARMode, setIsARMode] = useState(true); // New AR Mode state
+  const [volume, setVolume] = useState('');
+  const [dryWeight, setDryWeight] = useState('');
+  const [isARMode, setIsARMode] = useState(true);
 
-  // Auto-generate Batch ID when switching to Latex mode, selecting a tree, or capturing a new image
+  // Auto-generate Batch ID
   useEffect(() => {
-    // Force regeneration if we detect the problematic placeholder "BATCH-999" or empty ID
-    if ((scanType === 'latex' && selectedTree && trees.length > 0) || batchID === 'BATCH-999') {
+    if (scanType === 'latex' && selectedTree && trees.length > 0) {
       const tree = trees.find(t => t._id === selectedTree);
       if (tree) {
-        // Generate completely unique ID: TREE_ID + Random String + Timestamp
-        // This ensures uniqueness even if multiple scans happen quickly
         const timestamp = Date.now().toString(36).toUpperCase();
         const random = Math.random().toString(36).substring(2, 6).toUpperCase();
         const autoID = `${tree.treeID}-${timestamp}-${random}`;
         setBatchID(autoID);
       }
     }
-  }, [scanType, selectedTree, trees, image]); // Added dependency on 'image' so it regenerates when a new image is picked
+  }, [scanType, selectedTree, trees]);
 
   useFocusEffect(
     useCallback(() => {
       loadTrees();
+      return () => {
+        setIsCameraActive(false);
+      };
     }, [])
   );
 
@@ -75,255 +84,128 @@ const CameraScreen = ({ navigation }) => {
     setLoadingTrees(true);
     try {
       const response = await treeAPI.getAll();
-      const treeList = response.data || [];
+      const treeList = response.data || response || [];
+      console.log('✅ Trees loaded:', treeList.length);
       setTrees(treeList);
       
-      // Auto-select if only one tree or if none selected yet
       if (treeList.length > 0 && !selectedTree) {
         setSelectedTree(treeList[0]._id);
       }
     } catch (error) {
-      console.log('Error fetching trees:', error);
+      console.log('❌ Error fetching trees:', error);
     } finally {
       setLoadingTrees(false);
     }
   };
 
   const takePicture = async () => {
-    if (cameraRef) {
+    if (cameraRef.current) {
       try {
-        const photo = await cameraRef.takePictureAsync({
+        console.log('📸 Taking picture...');
+        const photo = await cameraRef.current.takePictureAsync({
           quality: 0.8,
           base64: false,
+          skipProcessing: true, // Attempt to speed up capture
         });
-        setImage(photo);
+        
+        console.log('📸 Camera photo taken:', photo.uri);
+        
+        const imageData = {
+          uri: photo.uri,
+          fileName: `camera-${Date.now()}.jpg`,
+          mimeType: 'image/jpeg',
+          width: photo.width,
+          height: photo.height
+        };
+        
+        console.log('✅ Image data set:', imageData);
+        setImage(imageData);
+        setImageKey(prev => prev + 1); // Force re-render
+        setScanResult(null);
         setIsCameraActive(false);
       } catch (error) {
-        Alert.alert('Error', 'Failed to take picture');
+        console.error('❌ Take picture error:', error);
+        // Retry logic
+        try {
+            console.log('🔄 Retrying capture in 500ms...');
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (cameraRef.current) {
+                const photo = await cameraRef.current.takePictureAsync({
+                    quality: 0.7, // Lower quality for retry
+                    base64: false,
+                    skipProcessing: true,
+                });
+                
+                const imageData = {
+                    uri: photo.uri,
+                    fileName: `camera-retry-${Date.now()}.jpg`,
+                    mimeType: 'image/jpeg',
+                    width: photo.width,
+                    height: photo.height
+                };
+                setImage(imageData);
+                setImageKey(prev => prev + 1);
+                setScanResult(null);
+                setIsCameraActive(false);
+                return;
+            }
+        } catch (retryError) {
+             console.error('❌ Retry failed:', retryError);
+             Alert.alert('Error', 'Failed to take picture. Please try again.');
+        }
       }
     }
   };
-
-  if (isCameraActive) {
-    return (
-      <View style={styles.cameraContainer}>
-        <CameraView 
-          style={styles.camera} 
-          facing="back"
-          ref={(ref) => setCameraRef(ref)}
-        />
-        {/* AR Overlay */}
-        <View style={styles.overlayContainer}>
-          <LinearGradient
-            colors={['rgba(0,0,0,0.6)', 'transparent', 'transparent', 'rgba(0,0,0,0.6)']}
-            style={styles.gradientOverlay}
-            pointerEvents="none"
-          />
-          
-          <View style={styles.overlayHeader}>
-            <TouchableOpacity onPress={() => setIsCameraActive(false)} style={styles.closeCameraButton}>
-              <MaterialIcons name="close" size={28} color="#FFF" />
-            </TouchableOpacity>
-            
-            <View style={styles.arBadge}>
-              <MaterialIcons name="view-in-ar" size={18} color="#FFF" />
-              <Text style={styles.arText}>AR Assist</Text>
-            </View>
-          </View>
-
-          {/* Guidelines */}
-          {isARMode && (
-            <View style={styles.guidelinesContainer} pointerEvents="none">
-              {scanType === 'tree' ? (
-                treePart === 'trunk' ? (
-                  <>
-                    {/* Trunk Alignment Box */}
-                    <View style={styles.viewFinder}>
-                      <View style={[styles.corner, styles.cornerTL]} />
-                      <View style={[styles.corner, styles.cornerTR]} />
-                      <View style={[styles.corner, styles.cornerBL]} />
-                      <View style={[styles.corner, styles.cornerBR]} />
-                      
-                      {/* 30-degree Tapping Angle Guide */}
-                      <View style={styles.angleGuideContainer}>
-                        <View style={styles.angleLine} />
-                        <Text style={styles.angleText}>30° Cut Angle</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.instructionContainer}>
-                      <Text style={styles.guideInstruction}>
-                        Align trunk within frame & match cut angle
-                      </Text>
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    {/* Leaf Analysis Guide */}
-                    <View style={styles.latexViewFinder}>
-                      <View style={[styles.corner, styles.cornerTL]} />
-                      <View style={[styles.corner, styles.cornerTR]} />
-                      <View style={[styles.corner, styles.cornerBL]} />
-                      <View style={[styles.corner, styles.cornerBR]} />
-                      
-                      <MaterialIcons 
-                        name="eco" 
-                        size={48} 
-                        color="rgba(255,255,255,0.3)" 
-                        style={styles.watermarkIcon}
-                      />
-                    </View>
-
-                    <View style={styles.instructionContainer}>
-                      <Text style={styles.guideInstruction}>
-                        Center leaf in frame for disease detection
-                      </Text>
-                    </View>
-                  </>
-                )
-              ) : (
-                <>
-                  {/* Latex Quality Guide */}
-                  <View style={styles.latexViewFinder}>
-                    <View style={[styles.corner, styles.cornerTL]} />
-                    <View style={[styles.corner, styles.cornerTR]} />
-                    <View style={[styles.corner, styles.cornerBL]} />
-                    <View style={[styles.corner, styles.cornerBR]} />
-                    
-                    {/* Liquid Level / Center Focus */}
-                    <View style={styles.liquidLevelGuide} />
-                    <MaterialIcons 
-                      name="opacity" 
-                      size={48} 
-                      color="rgba(255,255,255,0.3)" 
-                      style={styles.watermarkIcon}
-                    />
-                  </View>
-
-                  <View style={styles.instructionContainer}>
-                    <Text style={styles.guideInstruction}>
-                      Center latex sample & ensure good lighting
-                    </Text>
-                  </View>
-                </>
-              )}
-            </View>
-          )}
-
-          {/* Capture Button */}
-          <View style={styles.captureContainer}>
-            {/* Camera Mode Toggles (Bottom Position) */}
-            {scanType === 'tree' && (
-              <View style={styles.cameraToggleContainer}>
-                <TouchableOpacity 
-                  style={[styles.cameraToggle, treePart === 'trunk' && styles.cameraToggleActive]}
-                  onPress={() => setTreePart('trunk')}
-                >
-                  <MaterialIcons name="straighten" size={16} color={treePart === 'trunk' ? '#FFF' : 'rgba(255,255,255,0.7)'} />
-                  <Text style={[styles.cameraToggleText, treePart === 'trunk' && styles.cameraToggleTextActive]}>Trunk</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.cameraToggle, treePart === 'leaf' && styles.cameraToggleActive]}
-                  onPress={() => setTreePart('leaf')}
-                >
-                  <MaterialIcons name="eco" size={16} color={treePart === 'leaf' ? '#FFF' : 'rgba(255,255,255,0.7)'} />
-                  <Text style={[styles.cameraToggleText, treePart === 'leaf' && styles.cameraToggleTextActive]}>Leaf</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <TouchableOpacity onPress={takePicture} activeOpacity={0.7}>
-              <View style={styles.captureButtonOuter}>
-                <LinearGradient
-                  colors={['rgba(255,255,255,0.3)', 'rgba(255,255,255,0.1)']}
-                  style={styles.captureButtonRing}
-                >
-                  <View style={styles.captureButtonInner}>
-                    <View style={styles.captureButtonCore} />
-                  </View>
-                </LinearGradient>
-              </View>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    );
-  }
-
-  const handleResendVerification = async () => {
-    if (resending) return;
-    setResending(true);
-    try {
-      const result = await resendVerificationEmail(user.email);
-      if (result.success) {
-        Alert.alert('Success', result.message || 'Verification email sent!');
-      } else {
-        Alert.alert('Error', result.error);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to resend verification email.');
-    } finally {
-      setResending(false);
-    }
-  };
-
-  if (!user?.isVerified) {
-    return (
-      <View style={[styles.container, styles.centerContent]}>
-        <MaterialIcons name="lock-outline" size={80} color={theme.colors.textLight} style={styles.lockIcon} />
-        <Text style={styles.lockTitle}>Feature Locked</Text>
-        <Text style={styles.lockMessage}>
-          Please verify your email address to access the camera and image processing features.
-        </Text>
-        <CustomButton
-          title="Resend Verification Email"
-          onPress={handleResendVerification}
-          loading={resending}
-          style={styles.resendButton}
-        />
-      </View>
-    );
-  }
 
   const pickImage = async (useCamera) => {
     try {
       if (useCamera) {
-        if (!permission) {
-          // Permission might be null initially
+        if (!permission?.granted) {
           const perm = await requestPermission();
           if (!perm.granted) {
-             Alert.alert('Permission Required', 'Please allow camera access');
-             return;
-          }
-        } else if (!permission.granted) {
-          const perm = await requestPermission();
-          if (!perm.granted) {
-            Alert.alert('Permission Required', 'Please allow camera access');
+            Alert.alert('Permission Required', 'Please allow camera access to scan trees.');
             return;
           }
         }
-        
         setIsCameraActive(true);
       } else {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-          Alert.alert('Permission Required', 'Please allow gallery access');
-          return;
-        }
-
+        console.log('📷 Opening gallery picker...');
+        
         const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images'],
-          allowsEditing: true,
-          aspect: [4, 3],
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: false,
           quality: 0.8,
         });
 
-        if (!result.canceled) {
-          setImage(result.assets[0]);
+        console.log('📷 Picker result:', JSON.stringify(result, null, 2));
+
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+          const asset = result.assets[0];
+          
+          console.log('📸 Asset details:');
+          console.log('  URI:', asset.uri);
+          console.log('  Type:', asset.mimeType);
+          console.log('  Name:', asset.fileName);
+          console.log('  Size:', asset.width, 'x', asset.height);
+          
+          const imageData = {
+            uri: asset.uri,
+            fileName: asset.fileName || `gallery-${Date.now()}.jpg`,
+            mimeType: asset.mimeType || asset.type || 'image/jpeg',
+            width: asset.width,
+            height: asset.height
+          };
+          
+          console.log('✅ Setting image data:', JSON.stringify(imageData, null, 2));
+          setImage(imageData);
+          setImageKey(prev => prev + 1); // Force re-render
+          setScanResult(null);
+        } else {
+          console.log('❌ Picker was canceled or no assets');
         }
       }
     } catch (error) {
-      console.error('ImagePicker Error:', error);
+      console.error('❌ ImagePicker Error:', error);
       Alert.alert('Error', `Failed to pick image: ${error.message || error}`);
     }
   };
@@ -350,45 +232,119 @@ const CameraScreen = ({ navigation }) => {
       return;
     }
 
+    console.log('📸 Starting upload with image:', image);
+
     setUploading(true);
     setProgress(0);
 
-    // Simulate progress
     const progressInterval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 90) {
           clearInterval(progressInterval);
           return 90;
         }
-        return prev + 10;
+        return prev + 5;
       });
-    }, 500);
+    }, 1000);
 
     try {
+      // Prepare the image for upload
+      let uploadUri = image.uri;
+      let fileName = image.fileName || `scan-${Date.now()}.jpg`;
+      
+      console.log('📁 Original URI:', uploadUri);
+      console.log('📁 Platform:', Platform.OS);
+      
+      // Handle Android content URIs
+      if (Platform.OS === 'android' && uploadUri.startsWith('content://')) {
+        try {
+          const destPath = `${FileSystem.cacheDirectory}${fileName}`;
+          console.log('📋 Copying from content URI to:', destPath);
+          
+          await FileSystem.copyAsync({
+            from: uploadUri,
+            to: destPath
+          });
+          
+          uploadUri = destPath;
+          console.log('✅ File copied successfully to:', uploadUri);
+        } catch (copyError) {
+          console.error('❌ Copy error:', copyError);
+          clearInterval(progressInterval);
+          setUploading(false);
+          setProgress(0);
+          Alert.alert('Error', 'Failed to prepare image for upload. Please try taking a photo with the camera instead.');
+          return;
+        }
+      }
+      
+      // Ensure proper URI format for FormData
+      if (!uploadUri.startsWith('file://') && !uploadUri.startsWith('http') && !uploadUri.startsWith('content://')) {
+        uploadUri = `file://${uploadUri}`;
+      }
+      
+      console.log('📤 Final upload URI:', uploadUri);
+      
+      // Create FormData
       const formData = new FormData();
-      formData.append('image', {
-        uri: Platform.OS === 'android' && !image.uri.startsWith('file://') ? `file://${image.uri}` : image.uri,
-        type: 'image/jpeg',
-        name: scanType === 'tree' ? 'tree-scan.jpg' : 'latex-scan.jpg',
-      });
+      
+      // Append the image
+      const imageData = {
+        uri: uploadUri,
+        type: image.mimeType || 'image/jpeg',
+        name: fileName,
+      };
+      
+      console.log('📦 Image data for FormData:', imageData);
+      formData.append('image', imageData);
 
+      // Append additional fields
       if (scanType === 'tree') {
         formData.append('treeId', selectedTree);
         formData.append('scanType', 'tree');
-        formData.append('scanSubType', treePart); // Send 'trunk' or 'leaf'
-        await scanAPI.upload(formData);
+        formData.append('scanSubType', treePart);
+        
+        console.log('🌳 Tree scan data:', {
+          treeId: selectedTree,
+          scanType: 'tree',
+          scanSubType: treePart
+        });
+        
+        console.log('🚀 Uploading tree scan...');
+        const response = await scanAPI.upload(formData);
+        console.log('✅ Upload response:', response);
+        
+        // Store the full scan data
+        setScanResult({
+            type: 'tree',
+            data: response.data
+        });
+        
       } else {
         formData.append('batchID', batchID);
-        await latexAPI.createBatch(formData);
-      }
+        formData.append('volume', volume || '0');
+        formData.append('dryWeight', dryWeight || '0');
+        // Explicitly append empty fields to avoid backend issues if it expects them
+        formData.append('notes', '');
+        
+        console.log('💧 Latex scan data:', { batchID });
+        console.log('🚀 Uploading latex scan...');
+        const response = await latexAPI.createBatch(formData);
+        console.log('✅ Upload response:', response);
 
+        setScanResult({
+            type: 'latex',
+            data: response.data
+        });
+      }
+      
       clearInterval(progressInterval);
       setProgress(100);
 
-      // Slight delay to show 100%
       setTimeout(() => {
         setUploading(false);
-        setScanResult({ success: true, type: scanType });
+        // setScanResult is already called above with data
+        console.log('✅ Upload completed successfully');
       }, 500);
       
     } catch (error) {
@@ -396,355 +352,667 @@ const CameraScreen = ({ navigation }) => {
       setProgress(0);
       setUploading(false);
       
-      const errorMessage = error.error || error.message || 'Failed to upload scan';
+      console.error('❌❌❌ UPLOAD ERROR ❌❌❌');
+      console.error('Error type:', typeof error);
+      console.error('Error object:', error);
+      
+      let errorMessage = 'Failed to upload scan';
+      let debugInfo = '';
+      
+      // Handle different error formats
+      if (typeof error === 'object' && error !== null) {
+        if (error.error) {
+          errorMessage = error.error;
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+        
+        if (error.details) {
+          debugInfo = JSON.stringify(error.details);
+        }
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+      
+      console.error('Parsed error message:', errorMessage);
+      console.error('Debug info:', debugInfo);
       
       if (errorMessage.toLowerCase().includes("not appear to contain a tree")) {
-         Alert.alert(
-           'No Tree Detected 🌳', 
-           'The image does not appear to contain a tree. Please capture a clear image of a rubber tree.'
-         );
+        Alert.alert(
+          'No Tree Detected 🌳', 
+          'The image does not appear to contain a tree. Please capture a clear image of a rubber tree.'
+        );
+      } else if (errorMessage.toLowerCase().includes('network')) {
+        Alert.alert(
+          'Network Error',
+          'Cannot connect to server. Please check:\n\n1. Your internet connection\n2. Server is running\n3. You are on the same WiFi network',
+          [{ text: 'OK' }]
+        );
       } else {
-         Alert.alert('Upload Failed', errorMessage);
+        Alert.alert(
+          'Upload Failed',
+          errorMessage + (debugInfo ? `\n\n${debugInfo}` : ''),
+          [{ text: 'OK' }]
+        );
       }
     }
   };
 
+  const handleResendVerification = async () => {
+    if (resending) return;
+    setResending(true);
+    try {
+      const result = await resendVerificationEmail(user.email);
+      if (result.success) {
+        Alert.alert('Success', result.message || 'Verification email sent!');
+      } else {
+        Alert.alert('Error', result.error);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to resend verification email.');
+    } finally {
+      setResending(false);
+    }
+  };
+
+  // Test backend connection
+  const testBackendConnection = async () => {
+    try {
+      console.log('🧪 Testing backend connection...');
+      
+      // Try multiple endpoints to diagnose
+      const endpoints = [
+        { name: 'Trees API', method: () => treeAPI.getAll() },
+        { name: 'Auth API', method: () => api.get('/api/auth/test-connection').catch(() => ({ status: 'skipped' })) } // Optional check
+      ];
+
+      const response = await treeAPI.getAll();
+      const treeCount = (response.data || response || []).length;
+      
+      console.log('✅ Backend is reachable!', response);
+      Alert.alert(
+        'Connection Successful ✅', 
+        `Successfully connected to backend.\nURL: ${api.defaults.baseURL}\nTrees found: ${treeCount}`
+      );
+    } catch (error) {
+      console.error('❌ Backend test failed:', error);
+      
+      let errorMsg = error.message || 'Unknown error';
+      if (errorMsg.includes('Network Error')) {
+        errorMsg += '\n\nPossible causes:\n1. Server not running\n2. Different WiFi network\n3. Firewall blocking port 5000';
+        if (Platform.OS === 'android') {
+          errorMsg += '\n4. Emulator network bridge issue';
+        }
+      }
+
+      Alert.alert(
+        'Connection Failed ❌',
+        `Cannot reach backend server.\n\n${errorMsg}`
+      );
+    }
+  };
+
+  // ------------------------------------------------------------------
+  // Camera View Overlay
+  // ------------------------------------------------------------------
+  if (isCameraActive) {
+    return (
+      <View style={styles.cameraContainer}>
+        <CameraView 
+          style={styles.camera} 
+          facing="back"
+          ref={cameraRef}
+          mode="picture"
+          onCameraReady={() => {
+              console.log('📸 Camera is ready');
+              setIsCameraReady(true);
+          }}
+          onMountError={(e) => console.error('❌ Camera mount error:', e)}
+        >
+          <View style={styles.overlayContainer}>
+            <LinearGradient
+              colors={['rgba(0,0,0,0.6)', 'transparent', 'transparent', 'rgba(0,0,0,0.8)']}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            
+            <View style={styles.cameraHeader}>
+               <TouchableOpacity onPress={() => setIsCameraActive(false)} style={styles.closeButton}>
+                 <Ionicons name="close" size={28} color="#FFF" />
+               </TouchableOpacity>
+               
+               <View style={styles.arBadge}>
+                 <MaterialCommunityIcons name="augmented-reality" size={18} color={theme.colors.primary} />
+                 <Text style={styles.arText}>AI Assistant Active</Text>
+               </View>
+
+               <View style={{ width: 40 }} /> 
+            </View>
+
+            {isARMode && (
+              <View style={styles.guidelinesContainer} pointerEvents="none">
+                {scanType === 'tree' ? (
+                  treePart === 'trunk' ? (
+                    <>
+                      <View style={styles.viewFinder}>
+                        <View style={[styles.corner, styles.cornerTL]} />
+                        <View style={[styles.corner, styles.cornerTR]} />
+                        <View style={[styles.corner, styles.cornerBL]} />
+                        <View style={[styles.corner, styles.cornerBR]} />
+                        
+                        <View style={styles.angleGuideContainer}>
+                          <View style={styles.angleLine} />
+                          <Text style={styles.angleText}>30° Angle</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.guideInstruction}>Align trunk within frame</Text>
+                    </>
+                  ) : (
+                    <>
+                      <View style={styles.latexViewFinder}>
+                        <View style={[styles.corner, styles.cornerTL]} />
+                        <View style={[styles.corner, styles.cornerTR]} />
+                        <View style={[styles.corner, styles.cornerBL]} />
+                        <View style={[styles.corner, styles.cornerBR]} />
+                        <MaterialIcons name="eco" size={64} color="rgba(255,255,255,0.2)" />
+                      </View>
+                      <Text style={styles.guideInstruction}>Center leaf for disease check</Text>
+                    </>
+                  )
+                ) : (
+                  <>
+                    <View style={styles.latexViewFinder}>
+                        <View style={[styles.corner, styles.cornerTL]} />
+                        <View style={[styles.corner, styles.cornerTR]} />
+                        <View style={[styles.corner, styles.cornerBL]} />
+                        <View style={[styles.corner, styles.cornerBR]} />
+                        <View style={styles.liquidLevelGuide} />
+                        <MaterialCommunityIcons name="water" size={64} color="rgba(255,255,255,0.2)" />
+                    </View>
+                    <Text style={styles.guideInstruction}>Ensure good lighting on latex</Text>
+                  </>
+                )}
+              </View>
+            )}
+
+            <View style={styles.cameraControls}>
+               {scanType === 'tree' && (
+                <View style={styles.cameraToggleWrapper}>
+                  <TouchableOpacity 
+                    style={[styles.cameraToggle, treePart === 'trunk' && styles.cameraToggleActive]}
+                    onPress={() => setTreePart('trunk')}
+                  >
+                    <Text style={[styles.cameraToggleText, treePart === 'trunk' && styles.cameraToggleTextActive]}>Trunk</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.cameraToggle, treePart === 'leaf' && styles.cameraToggleActive]}
+                    onPress={() => setTreePart('leaf')}
+                  >
+                    <Text style={[styles.cameraToggleText, treePart === 'leaf' && styles.cameraToggleTextActive]}>Leaf</Text>
+                  </TouchableOpacity>
+                </View>
+               )}
+
+               <TouchableOpacity onPress={takePicture} activeOpacity={0.8} style={styles.shutterButton}>
+                  <View style={styles.shutterInner} />
+               </TouchableOpacity>
+            </View>
+          </View>
+        </CameraView>
+      </View>
+    );
+  }
+
+  // ------------------------------------------------------------------
+  // Main Dashboard View
+  // ------------------------------------------------------------------
+
+  if (!user?.isVerified) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <View style={styles.lockIconContainer}>
+          <MaterialIcons name="lock-outline" size={48} color={theme.colors.primary} />
+        </View>
+        <Text style={styles.lockTitle}>Access Restricted</Text>
+        <Text style={styles.lockMessage}>
+          Please verify your email address to unlock AI scanning capabilities.
+        </Text>
+        <CustomButton
+          title="Resend Verification Email"
+          onPress={handleResendVerification}
+          loading={resending}
+          style={styles.resendButton}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <LinearGradient
-        colors={[theme.colors.surface, theme.colors.background]}
-        style={styles.background}
+        colors={[theme.colors.background, '#F1F5F9']}
+        style={StyleSheet.absoluteFill}
       />
       
       <View style={styles.header}>
-        <TouchableOpacity 
-          onPress={() => navigation.goBack()}
-          style={styles.iconButton}
-        >
-          <MaterialIcons name="arrow-back" size={24} color={theme.colors.text} />
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
+          <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {scanType === 'tree' ? 'Scan Tree' : 'Scan Latex'}
-        </Text>
-        <TouchableOpacity 
-          onPress={() => setImage(null)}
-          style={[styles.iconButton, !image && styles.hidden]}
-          disabled={!image}
-        >
-          <MaterialIcons name="close" size={24} color={theme.colors.text} />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>New Scan</Text>
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          {/* Test Backend Button */}
+          <TouchableOpacity 
+            onPress={testBackendConnection}
+            style={[styles.iconButton, { backgroundColor: '#E0F2FE' }]}
+          >
+            <Ionicons name="cloud-outline" size={22} color="#0284C7" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            onPress={() => {
+              setImage(null);
+              setScanResult(null);
+            }} 
+            style={[styles.iconButton, !image && { opacity: 0 }]}
+            disabled={!image}
+          >
+            <Ionicons name="refresh-outline" size={22} color={theme.colors.text} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {scanResult ? (
-        <View style={styles.resultContainer}>
-          <View style={styles.resultContent}>
-            <LinearGradient
-              colors={['#FFFFFF', '#F0FDF4']}
-              style={styles.resultGradient}
-            >
-              <View style={styles.resultIconRing}>
-                <LinearGradient
-                  colors={theme.gradients.primary}
-                  style={styles.resultIconBg}
-                >
-                  <MaterialIcons name="check" size={40} color="#FFF" />
-                </LinearGradient>
-              </View>
-              <Text style={styles.resultTitle}>Analysis Complete!</Text>
-              <Text style={styles.resultMessage}>
-                {scanResult.type === 'tree' 
-                  ? 'Tree health data has been processed and saved to your history.' 
-                  : 'Latex quality batch has been created and logged successfully.'}
-              </Text>
-              <View style={styles.resultStatsRow}>
-                <View style={styles.resultStat}>
-                  <Text style={styles.resultStatLabel}>Status</Text>
-                  <Text style={[styles.resultStatValue, { color: theme.colors.success }]}>Success</Text>
-                </View>
-                <View style={styles.resultDivider} />
-                <View style={styles.resultStat}>
-                  <Text style={styles.resultStatLabel}>Type</Text>
-                  <Text style={styles.resultStatValue}>
-                    {scanResult.type === 'tree' ? 'Tree Scan' : 'Latex Batch'}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.resultActions}>
-                <TouchableOpacity
-                  style={styles.resultButtonPrimary}
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        
+        {scanResult ? (
+          <View style={styles.resultCard}>
+            <LinearGradient colors={['#FFFFFF', '#F8FAFC']} style={styles.resultGradient}>
+               
+               {/* Result Header */}
+               <View style={styles.resultHeader}>
+                  <View style={[styles.resultIconBg, { 
+                      backgroundColor: (scanResult.data?.healthStatus === 'healthy' || scanResult.data?.qualityClassification?.grade === 'A') 
+                        ? '#DCFCE7' : '#FEE2E2' 
+                  }]}>
+                    <MaterialCommunityIcons 
+                        name={scanResult.type === 'tree' ? "tree" : "water"} 
+                        size={32} 
+                        color={(scanResult.data?.healthStatus === 'healthy' || scanResult.data?.qualityClassification?.grade === 'A') 
+                            ? '#16A34A' : '#DC2626'} 
+                    />
+                  </View>
+                  <View style={{flex: 1}}>
+                      <Text style={styles.resultTitle}>
+                          {scanResult.type === 'tree' ? 'Health Analysis' : 'Latex Quality'}
+                      </Text>
+                      <Text style={styles.resultDate}>
+                          {new Date().toLocaleDateString()} • {new Date().toLocaleTimeString()}
+                      </Text>
+                  </View>
+               </View>
+
+               {/* Result Content */}
+               <View style={styles.resultBody}>
+                   {scanResult.type === 'tree' ? (
+                       <>
+                           <View style={styles.resultRow}>
+                               <Text style={styles.resultLabel}>Diagnosis</Text>
+                               <Text style={[styles.resultValue, { 
+                                   color: scanResult.data?.diseaseDetection?.[0]?.name === 'No disease detected' ? '#16A34A' : '#DC2626',
+                                   fontWeight: '700'
+                               }]}>
+                                   {scanResult.data?.diseaseDetection?.[0]?.name || 'Unknown'}
+                               </Text>
+                           </View>
+                           
+                           {scanResult.data?.diseaseDetection?.[0]?.confidence && (
+                               <View style={styles.resultRow}>
+                                   <Text style={styles.resultLabel}>Confidence</Text>
+                                   <Text style={styles.resultValue}>
+                                       {Math.round(scanResult.data.diseaseDetection[0].confidence)}%
+                                   </Text>
+                               </View>
+                           )}
+
+                           {scanResult.data?.diseaseDetection?.[0]?.recommendation && (
+                               <View style={styles.recommendationBox}>
+                                   <View style={styles.recommendationHeader}>
+                                     <MaterialIcons name="lightbulb-outline" size={20} color={theme.colors.primary} />
+                                     <Text style={styles.recommendationTitle}>Recommendation</Text>
+                                   </View>
+                                   <Text style={styles.recommendationText}>
+                                       {scanResult.data.diseaseDetection[0].recommendation}
+                                   </Text>
+                               </View>
+                           )}
+
+                           {/* Tappability */}
+                           {scanResult.data?.tappabilityAssessment && (
+                               <View style={styles.tappabilityBox}>
+                                   <View style={styles.resultRow}>
+                                       <Text style={styles.resultLabel}>Tappable</Text>
+                                       <View style={[styles.badge, {
+                                           backgroundColor: scanResult.data.tappabilityAssessment.isTappable ? '#DCFCE7' : '#FEF3C7'
+                                       }]}>
+                                         <Text style={[styles.badgeText, {
+                                             color: scanResult.data.tappabilityAssessment.isTappable ? '#16A34A' : '#D97706'
+                                         }]}>
+                                             {scanResult.data.tappabilityAssessment.isTappable ? 'YES' : 'NO'}
+                                         </Text>
+                                       </View>
+                                   </View>
+                                   <Text style={styles.tappabilityReason}>
+                                       {scanResult.data.tappabilityAssessment.reason}
+                                   </Text>
+                               </View>
+                           )}
+                       </>
+                   ) : (
+                       <>
+                           {/* Latex Result */}
+                           <View style={styles.resultRow}>
+                               <Text style={styles.resultLabel}>Quality Grade</Text>
+                               <Text style={[styles.resultValue, { fontSize: 28, color: '#16A34A' }]}>
+                                   {scanResult.data?.qualityClassification?.grade || 'N/A'}
+                               </Text>
+                           </View>
+
+                           <View style={styles.statsGrid}>
+                               <View style={styles.statItem}>
+                                   <Text style={styles.statLabel}>Volume</Text>
+                                   <Text style={styles.statValue}>
+                                       {scanResult.data?.quantityEstimation?.volume || 0}
+                                       <Text style={styles.statUnit}> L</Text>
+                                   </Text>
+                               </View>
+                               <View style={styles.statItem}>
+                                   <Text style={styles.statLabel}>Dry Rubber</Text>
+                                   <Text style={styles.statValue}>
+                                       {scanResult.data?.productYieldEstimation?.dryRubberContent || 0}
+                                       <Text style={styles.statUnit}> %</Text>
+                                   </Text>
+                               </View>
+                           </View>
+
+                           {scanResult.data?.qualityClassification?.description && (
+                               <View style={styles.recommendationBox}>
+                                   <View style={styles.recommendationHeader}>
+                                     <MaterialIcons name="assessment" size={20} color={theme.colors.primary} />
+                                     <Text style={styles.recommendationTitle}>Assessment</Text>
+                                   </View>
+                                   <Text style={styles.recommendationText}>
+                                       {scanResult.data.qualityClassification.description}
+                                   </Text>
+                               </View>
+                           )}
+                       </>
+                   )}
+               </View>
+               
+               <View style={styles.resultActions}>
+                   <TouchableOpacity
+                     style={styles.primaryButton}
+                     onPress={() => {
+                       setScanResult(null);
+                       setImage(null);
+                       setBatchID('');
+                       setVolume('');
+                       setDryWeight('');
+                       navigation.navigate('History', { 
+                            initialTab: scanResult.type === 'latex' ? 'latex' : 'trees',
+                            newScan: scanResult.data,
+                            refreshTimestamp: Date.now()
+                        });
+                     }}
+                   >
+                     <Text style={styles.primaryButtonText}>View Full History</Text>
+                     <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                   </TouchableOpacity>
+
+                   <TouchableOpacity 
+                     style={styles.secondaryButton}
+                     onPress={() => {
+                       setScanResult(null);
+                       setImage(null);
+                       setBatchID('');
+                       setVolume('');
+                       setDryWeight('');
+                     }}
+                   >
+                     <Text style={styles.secondaryButtonText}>Scan Another</Text>
+                   </TouchableOpacity>
+               </View>
+            </LinearGradient>
+          </View>
+        ) : (
+          <>
+            <View style={styles.sectionContainer}>
+              <Text style={styles.sectionLabel}>Select Scan Type</Text>
+              <View style={styles.modeRow}>
+                <TouchableOpacity 
+                  style={[styles.modeChip, scanType === 'tree' && styles.modeChipActive]}
                   onPress={() => {
-                    setScanResult(null);
-                    setImage(null);
-                    setBatchID('');
-                    navigation.navigate('History', { initialTab: scanResult.type === 'latex' ? 'latex' : 'trees' });
+                      setScanType('tree');
+                      setVolume('');
+                      setDryWeight('');
+                      setBatchID('');
                   }}
                   activeOpacity={0.8}
                 >
-                  <LinearGradient
-                    colors={theme.gradients.primary}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.resultButtonGradient}
-                  >
-                    <Text style={styles.resultButtonText}>View Results</Text>
-                    <MaterialIcons name="arrow-forward" size={20} color="#FFF" />
-                  </LinearGradient>
+                  <View style={[styles.modeIconBg, scanType === 'tree' && styles.modeIconBgActive]}>
+                    <MaterialCommunityIcons 
+                      name="tree-outline" 
+                      size={24} 
+                      color={scanType === 'tree' ? '#FFF' : theme.colors.textSecondary} 
+                    />
+                  </View>
+                  <Text style={[styles.modeChipText, scanType === 'tree' && styles.modeChipTextActive]}>Tree Health</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity 
-                  style={styles.resultButtonSecondary}
+                  style={[styles.modeChip, scanType === 'latex' && styles.modeChipActive]}
                   onPress={() => {
-                    setScanResult(null);
-                    setImage(null);
-                    setBatchID('');
+                      setScanType('latex');
+                      setVolume('');
+                      setDryWeight('');
                   }}
+                  activeOpacity={0.8}
                 >
-                  <MaterialIcons name="qr-code-scanner" size={20} color={theme.colors.primary} />
-                  <Text style={styles.resultButtonSecondaryText}>Scan Another</Text>
+                   <View style={[styles.modeIconBg, scanType === 'latex' && styles.modeIconBgActive]}>
+                    <MaterialCommunityIcons 
+                      name="water-outline" 
+                      size={24} 
+                      color={scanType === 'latex' ? '#FFF' : theme.colors.textSecondary} 
+                    />
+                  </View>
+                  <Text style={[styles.modeChipText, scanType === 'latex' && styles.modeChipTextActive]}>Latex Quality</Text>
                 </TouchableOpacity>
               </View>
-            </LinearGradient>
-          </View>
-        </View>
-      ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
-        {/* Unique Mode Selector - Split Cards */}
-        <View style={styles.modeSelectorContainer}>
-          <TouchableOpacity 
-            style={[styles.modeCard, scanType === 'tree' && styles.modeCardActive]}
-            onPress={() => {
-              setScanType('tree');
-              // Keep image when switching modes
-            }}
-            activeOpacity={0.9}
-          >
-             <LinearGradient
-                colors={scanType === 'tree' ? ['#ECFDF5', '#FFFFFF'] : ['#F8FAFC', '#F8FAFC']}
-                style={styles.modeCardGradient}
-             >
-               <View style={[styles.modeIconCircle, scanType === 'tree' && styles.modeIconActive]}>
-                 <MaterialIcons name="park" size={24} color={scanType === 'tree' ? '#FFF' : theme.colors.textSecondary} />
-               </View>
-               <Text style={[styles.modeCardTitle, scanType === 'tree' && styles.modeTextActive]}>Tree Analysis</Text>
-               {scanType === 'tree' && <View style={styles.activeIndicator} />}
-             </LinearGradient>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.modeCard, scanType === 'latex' && styles.modeCardActive]}
-            onPress={() => {
-              setScanType('latex');
-              // Keep image when switching modes
-            }}
-            activeOpacity={0.9}
-          >
-             <LinearGradient
-                colors={scanType === 'latex' ? ['#ECFDF5', '#FFFFFF'] : ['#F8FAFC', '#F8FAFC']}
-                style={styles.modeCardGradient}
-             >
-               <View style={[styles.modeIconCircle, scanType === 'latex' && styles.modeIconActive]}>
-                 <MaterialIcons name="opacity" size={24} color={scanType === 'latex' ? '#FFF' : theme.colors.textSecondary} />
-               </View>
-               <Text style={[styles.modeCardTitle, scanType === 'latex' && styles.modeTextActive]}>Latex Quality</Text>
-               {scanType === 'latex' && <View style={styles.activeIndicator} />}
-             </LinearGradient>
-          </TouchableOpacity>
-        </View>
-
-        {/* Sub-Mode Selector (Floating Segmented Control) */}
-        {scanType === 'tree' && (
-          <View style={styles.subModeWrapper}>
-            <View style={styles.subModeSegmented}>
-              <TouchableOpacity 
-                style={[styles.subModeSegment, treePart === 'trunk' && styles.subModeSegmentActive]}
-                onPress={() => setTreePart('trunk')}
-              >
-                <Text style={[styles.subModeSegmentText, treePart === 'trunk' && styles.subModeSegmentTextActive]}>Trunk</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.subModeSegment, treePart === 'leaf' && styles.subModeSegmentActive]}
-                onPress={() => setTreePart('leaf')}
-              >
-                <Text style={[styles.subModeSegmentText, treePart === 'leaf' && styles.subModeSegmentTextActive]}>Leaf</Text>
-              </TouchableOpacity>
             </View>
-          </View>
-        )}
 
-        {/* Tree Selector - Available for both modes now */}
-        {trees.length > 0 && (
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>
-              {scanType === 'tree' ? 'Select Tree to Scan' : 'Link to Tree Profile'}
-            </Text>
-            <TouchableOpacity 
-              style={styles.selectorButton}
-              onPress={() => setModalVisible(true)}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <MaterialIcons name="park" size={20} color={theme.colors.primary} />
-                <Text style={styles.selectorText}>
-                  {selectedTree 
-                    ? (trees.find(t => t._id === selectedTree)?.treeID || 'Unknown Tree')
-                    : 'Select a Tree'}
-                </Text>
+            {scanType === 'tree' && (
+              <View style={styles.subModeContainer}>
+                 <View style={styles.segmentControl}>
+                    <TouchableOpacity 
+                      style={[styles.segmentBtn, treePart === 'trunk' && styles.segmentBtnActive]}
+                      onPress={() => setTreePart('trunk')}
+                    >
+                      <Text style={[styles.segmentText, treePart === 'trunk' && styles.segmentTextActive]}>Trunk</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.segmentBtn, treePart === 'leaf' && styles.segmentBtnActive]}
+                      onPress={() => setTreePart('leaf')}
+                    >
+                      <Text style={[styles.segmentText, treePart === 'leaf' && styles.segmentTextActive]}>Leaf</Text>
+                    </TouchableOpacity>
+                 </View>
               </View>
-              <MaterialIcons name="arrow-drop-down" size={24} color={theme.colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Image Preview Section */}
-        {image ? (
-          <View style={styles.imageContainer}>
-            <Image source={{ uri: image.uri }} style={styles.image} resizeMode="cover" />
-            <LinearGradient
-              colors={['transparent', 'rgba(0,0,0,0.7)']}
-              style={styles.imageOverlay}
-            />
-            <TouchableOpacity
-              style={styles.removeButton}
-              onPress={() => setImage(null)}
-            >
-              <MaterialIcons name="close" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.placeholderContainer}>
-            <View style={styles.placeholderIconBg}>
-              <MaterialIcons name="add-a-photo" size={40} color={theme.colors.primary} />
-            </View>
-            <Text style={styles.placeholderText}>No image selected</Text>
-            <Text style={styles.placeholderSubtext}>Take a photo or choose from gallery</Text>
-          </View>
-        )}
-
-        {/* Action Buttons */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => pickImage(true)}
-            disabled={uploading}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={theme.gradients.primary}
-              style={styles.actionButtonGradient}
-            >
-              <MaterialIcons name="camera-alt" size={28} color="#FFF" />
-              <Text style={styles.actionButtonText}>Camera</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => pickImage(false)}
-            disabled={uploading}
-            activeOpacity={0.8}
-          >
-             <View style={styles.actionButtonSecondary}>
-              <MaterialIcons name="photo-library" size={28} color={theme.colors.primary} />
-              <Text style={[styles.actionButtonText, { color: theme.colors.primary }]}>Gallery</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* Warning Card - Required for both modes now */}
-        {trees.length === 0 && (
-          <View style={styles.warningCard}>
-            <MaterialIcons name="warning-amber" size={28} color={theme.colors.warning} />
-            <View style={styles.warningContent}>
-              <Text style={styles.warningTitle}>No Trees Found</Text>
-              <Text style={styles.warningText}>
-                {scanType === 'tree' 
-                  ? 'You need to create a tree profile before you can scan it.'
-                  : 'You need a tree profile to generate a linked Batch ID.'}
-              </Text>
-              <TouchableOpacity 
-                style={styles.createTreeLink}
-                onPress={() => navigation.navigate('AddTree')}
-              >
-                <Text style={styles.createTreeLinkText}>+ Create Tree Profile</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* Latex Batch ID Input */}
-        {scanType === 'latex' && image && (
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>Batch ID (Auto-Generated)</Text>
-            <View style={styles.readOnlyInput}>
-              <Text style={styles.readOnlyText}>{batchID}</Text>
-              <MaterialIcons name="lock" size={16} color={theme.colors.textLight} />
-            </View>
-            <Text style={styles.helperText}>
-              Unique ID generated for this specific sample
-            </Text>
-          </View>
-        )}
-
-        {/* Upload Button */}
-        {image && (
-          <CustomButton
-            title={scanType === 'tree' ? "Analyze Tree" : "Analyze Latex"}
-            onPress={uploadScan}
-            loading={uploading}
-            disabled={scanType === 'tree' && trees.length === 0}
-            icon="analytics"
-            style={styles.uploadButton}
-            size="lg"
-          />
-        )}
-
-        {/* Tips Card */}
-        <View style={styles.infoCard}>
-          <View style={styles.infoCardHeader}>
-            <MaterialIcons name="lightbulb" size={24} color={theme.colors.primary} />
-            <Text style={styles.infoTitle}>
-              {scanType === 'tree' ? 'Tree Photography Tips' : 'Latex Sampling Tips'}
-            </Text>
-          </View>
-          <View style={styles.tipsList}>
-            {scanType === 'tree' ? (
-              <>
-                <View style={styles.tipItem}>
-                  <MaterialIcons name="check-circle" size={16} color={theme.colors.success} />
-                  <Text style={styles.tipText}>Use natural lighting</Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <MaterialIcons name="check-circle" size={16} color={theme.colors.success} />
-                  <Text style={styles.tipText}>Focus on tree trunk</Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <MaterialIcons name="check-circle" size={16} color={theme.colors.success} />
-                  <Text style={styles.tipText}>Avoid heavy shadows</Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <MaterialIcons name="check-circle" size={16} color={theme.colors.success} />
-                  <Text style={styles.tipText}>Capture bark texture</Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={styles.tipItem}>
-                  <MaterialIcons name="check-circle" size={16} color={theme.colors.success} />
-                  <Text style={styles.tipText}>Ensure good lighting on latex</Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <MaterialIcons name="check-circle" size={16} color={theme.colors.success} />
-                  <Text style={styles.tipText}>Capture color clearly</Text>
-                </View>
-                <View style={styles.tipItem}>
-                  <MaterialIcons name="check-circle" size={16} color={theme.colors.success} />
-                  <Text style={styles.tipText}>Avoid reflections in container</Text>
-                </View>
-              </>
             )}
-          </View>
-        </View>
+
+            {trees.length > 0 && (
+              <View style={styles.inputWrapper}>
+                <Text style={styles.inputLabel}>
+                   {scanType === 'tree' ? 'Target Tree' : 'Linked Tree Profile'}
+                </Text>
+                <TouchableOpacity 
+                  style={styles.dropdownButton}
+                  onPress={() => setModalVisible(true)}
+                >
+                   <View style={styles.dropdownContent}>
+                     <View style={[styles.miniIcon, { backgroundColor: '#F0FDF4' }]}>
+                        <MaterialCommunityIcons name="pine-tree" size={20} color={theme.colors.primary} />
+                     </View>
+                     <View>
+                        <Text style={styles.dropdownValue}>
+                          {selectedTree 
+                            ? (trees.find(t => t._id === selectedTree)?.treeID || 'Unknown Tree')
+                            : 'Select a Tree'}
+                        </Text>
+                        <Text style={styles.dropdownSub}>
+                           {selectedTree 
+                             ? `${trees.find(t => t._id === selectedTree)?.species || 'Rubber Tree'}` 
+                             : 'Tap to select from list'}
+                        </Text>
+                     </View>
+                   </View>
+                   <Ionicons name="chevron-down" size={20} color={theme.colors.textLight} />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {scanType === 'latex' && selectedTree && (
+               <View style={styles.inputWrapper}>
+                 <Text style={styles.inputLabel}>Batch Reference ID</Text>
+                 <View style={styles.readOnlyField}>
+                    <Text style={styles.readOnlyValue}>{batchID}</Text>
+                    <Ionicons name="lock-closed-outline" size={16} color={theme.colors.textLight} />
+                 </View>
+               </View>
+            )}
+
+            {scanType === 'latex' && image && (
+                <View style={styles.inputRow}>
+                    <View style={[styles.inputWrapper, { flex: 1, marginRight: 8 }]}>
+                        <Text style={styles.inputLabel}>Volume (L)</Text>
+                        <TextInput
+                            style={styles.textInput}
+                            value={volume}
+                            onChangeText={setVolume}
+                            placeholder="0.0"
+                            placeholderTextColor="#94A3B8"
+                            keyboardType="numeric"
+                        />
+                    </View>
+                    <View style={[styles.inputWrapper, { flex: 1, marginLeft: 8 }]}>
+                        <Text style={styles.inputLabel}>Dry Weight (%)</Text>
+                        <TextInput
+                            style={styles.textInput}
+                            value={dryWeight}
+                            onChangeText={setDryWeight}
+                            placeholder="Optional"
+                            placeholderTextColor="#94A3B8"
+                            keyboardType="numeric"
+                        />
+                    </View>
+                </View>
+            )}
+
+            <View style={styles.imageSection}>
+               {image ? (
+                 <View style={styles.previewContainer}>
+                    <Image 
+                      key={imageKey}
+                      source={{ uri: image.uri }}
+                      style={styles.previewImage} 
+                      resizeMode="cover"
+                      onError={(e) => {
+                        console.log('❌❌ Image Load Error ❌❌');
+                        console.log('URI:', image.uri);
+                        console.log('Error:', e.nativeEvent.error);
+                      }}
+                      onLoad={() => {
+                        console.log('✅✅ Image loaded successfully! ✅✅');
+                      }}
+                    />
+                    
+                    <View style={styles.imageInfo}>
+                      <Text style={styles.imageInfoText} numberOfLines={1}>
+                        {image.fileName || 'Image loaded'}
+                      </Text>
+                    </View>
+                    
+                    <TouchableOpacity 
+                      style={styles.removeImageBtn}
+                      onPress={() => {
+                        setImage(null);
+                        setScanResult(null);
+                      }}
+                    >
+                      <Ionicons name="close" size={20} color="#FFF" />
+                    </TouchableOpacity>
+                    <View style={styles.imageBadge}>
+                      <Text style={styles.imageBadgeText}>
+                        {scanType === 'tree' ? 'Tree Scan' : 'Latex Sample'}
+                      </Text>
+                    </View>
+                 </View>
+               ) : (
+                 <View style={styles.placeholderCard}>
+                    <View style={styles.placeholderIcon}>
+                       <MaterialCommunityIcons name="camera-plus-outline" size={36} color={theme.colors.primary} />
+                    </View>
+                    <Text style={styles.placeholderTitle}>Capture or Upload</Text>
+                    <Text style={styles.placeholderDesc}>
+                      {scanType === 'tree' 
+                        ? 'Take a clear photo of the tree trunk or leaf for analysis.' 
+                        : 'Take a well-lit photo of the latex sample for quality check.'}
+                    </Text>
+                    
+                    <View style={styles.pickerButtons}>
+                       <TouchableOpacity style={styles.pickerBtnPrimary} onPress={() => pickImage(true)}>
+                          <Ionicons name="camera" size={20} color="#FFF" />
+                          <Text style={styles.pickerBtnTextPrimary}>Use Camera</Text>
+                       </TouchableOpacity>
+                       <TouchableOpacity style={styles.pickerBtnSecondary} onPress={() => pickImage(false)}>
+                          <Ionicons name="images-outline" size={20} color={theme.colors.primary} />
+                          <Text style={styles.pickerBtnTextSecondary}>Gallery</Text>
+                       </TouchableOpacity>
+                    </View>
+                 </View>
+               )}
+            </View>
+
+            {image && (
+               <TouchableOpacity
+                 style={styles.analyzeButton}
+                 onPress={uploadScan}
+                 disabled={uploading}
+               >
+                 {uploading ? (
+                    <ActivityIndicator color="#FFF" />
+                 ) : (
+                    <>
+                      <MaterialCommunityIcons name="creation" size={24} color="#FFF" />
+                      <Text style={styles.analyzeButtonText}>
+                         {scanType === 'tree' ? 'Analyze Health' : 'Assess Quality'}
+                      </Text>
+                    </>
+                 )}
+               </TouchableOpacity>
+            )}
+
+            {trees.length === 0 && (
+              <View style={styles.warningBox}>
+                 <Ionicons name="alert-circle-outline" size={24} color="#B45309" />
+                 <View style={{ flex: 1 }}>
+                    <Text style={styles.warningText}>No tree profiles found.</Text>
+                    <TouchableOpacity onPress={() => navigation.navigate('AddTree')}>
+                       <Text style={styles.warningLink}>+ Create Tree Profile</Text>
+                    </TouchableOpacity>
+                 </View>
+              </View>
+            )}
+          </>
+        )}
       </ScrollView>
-      )}
 
       {/* Tree Selection Modal */}
       <Modal
@@ -754,41 +1022,46 @@ const CameraScreen = ({ navigation }) => {
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Tree</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <MaterialIcons name="close" size={24} color={theme.colors.textSecondary} />
+              <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={24} color={theme.colors.text} />
               </TouchableOpacity>
             </View>
             
             <FlatList
               data={trees}
               keyExtractor={(item) => item._id}
+              contentContainerStyle={styles.listContent}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={[
-                    styles.treeItem,
-                    selectedTree === item._id && styles.treeItemActive
+                    styles.listItem,
+                    selectedTree === item._id && styles.listItemActive
                   ]}
                   onPress={() => {
                     setSelectedTree(item._id);
                     setModalVisible(false);
                   }}
                 >
-                  <View style={styles.treeIconBg}>
-                    <MaterialIcons name="park" size={20} color={selectedTree === item._id ? '#FFF' : theme.colors.primary} />
+                  <View style={[styles.listIcon, selectedTree === item._id && styles.listIconActive]}>
+                    <MaterialCommunityIcons 
+                      name="tree" 
+                      size={20} 
+                      color={selectedTree === item._id ? '#FFF' : theme.colors.primary} 
+                    />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.treeItemTitle, selectedTree === item._id && styles.treeItemTextActive]}>
+                    <Text style={[styles.listItemTitle, selectedTree === item._id && styles.listItemTextActive]}>
                       {item.treeID}
                     </Text>
-                    <Text style={[styles.treeItemSubtitle, selectedTree === item._id && styles.treeItemTextActive]}>
-                      {item.species} • {new Date(item.plantedDate).getFullYear()}
+                    <Text style={[styles.listItemSub, selectedTree === item._id && styles.listItemTextActive]}>
+                      {item.species}
                     </Text>
                   </View>
                   {selectedTree === item._id && (
-                    <MaterialIcons name="check" size={20} color="#FFF" />
+                    <Ionicons name="checkmark-circle" size={24} color={theme.colors.primary} />
                   )}
                 </TouchableOpacity>
               )}
@@ -796,38 +1069,34 @@ const CameraScreen = ({ navigation }) => {
             
             <View style={styles.modalFooter}>
               <TouchableOpacity
-                style={styles.addNewTreeButton}
+                style={styles.addTreeBtn}
                 onPress={() => {
                   setModalVisible(false);
                   navigation.navigate('AddTree');
                 }}
               >
-                <MaterialIcons name="add-circle-outline" size={24} color={theme.colors.primary} />
-                <Text style={styles.addNewTreeText}>Add New Tree Profile</Text>
+                <Ionicons name="add" size={20} color={theme.colors.primary} />
+                <Text style={styles.addTreeBtnText}>Add New Tree Profile</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Loading Progress Modal */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={uploading}
-        onRequestClose={() => {}}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.loadingContainer}>
-            <Text style={styles.loadingText}>Analyzing Image...</Text>
-            <View style={styles.progressBarContainer}>
-              <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
+      {/* Upload Progress Overlay */}
+      <Modal visible={uploading} transparent animationType="fade">
+         <View style={styles.loadingOverlay}>
+            <View style={styles.loadingCard}>
+               <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginBottom: 20 }} />
+               <Text style={styles.loadingTitle}>Analyzing Scan...</Text>
+               <Text style={styles.loadingSub}>{progress}% Complete</Text>
+               <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${progress}%` }]} />
+               </View>
             </View>
-            <Text style={styles.progressPercentage}>{progress}%</Text>
-            <Text style={styles.loadingSubtext}>Please wait while AI processes your scan</Text>
-          </View>
-        </View>
+         </View>
       </Modal>
+
     </View>
   );
 };
@@ -837,880 +1106,915 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  background: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: 50, // For status bar
-    paddingBottom: theme.spacing.md,
-    backgroundColor: theme.colors.background,
+    paddingHorizontal: 24,
+    paddingTop: Platform.OS === 'ios' ? 60 : 50,
+    paddingBottom: 20,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
     zIndex: 10,
   },
-  modeSelectorContainer: {
-    flexDirection: 'row',
-    gap: 16,
-    paddingHorizontal: 4,
-    marginBottom: 24,
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: theme.colors.text,
+    letterSpacing: -0.5,
   },
-  modeCard: {
-    flex: 1,
-    borderRadius: 24,
-    ...theme.shadows.md,
-    backgroundColor: '#FFFFFF',
-    overflow: 'hidden',
-    height: 140,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  modeCardActive: {
-    ...theme.shadows.lg,
-    borderColor: theme.colors.primary,
-    borderWidth: 1.5,
-  },
-  modeCardGradient: {
-    flex: 1,
+  iconButton: {
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
+    borderRadius: 22,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  modeIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  scrollContent: {
+    padding: 24,
+    paddingBottom: 120,
+  },
+  sectionContainer: {
+    marginBottom: 32,
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+    marginBottom: 16,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modeChip: {
+    flex: 1,
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 12,
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  modeChipActive: {
+    backgroundColor: '#FFFFFF',
+    borderColor: theme.colors.primary,
+    borderWidth: 2,
+    shadowColor: theme.colors.primary,
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  modeIconBg: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
   },
-  modeIconActive: {
+  modeIconBgActive: {
     backgroundColor: theme.colors.primary,
   },
-  modeCardTitle: {
+  modeChipText: {
     fontSize: 15,
     fontWeight: '600',
-    color: theme.colors.textSecondary,
-    letterSpacing: 0.3,
+    color: '#64748B',
   },
-  modeTextActive: {
+  modeChipTextActive: {
     color: theme.colors.primary,
     fontWeight: '700',
   },
-  activeIndicator: {
-    position: 'absolute',
-    bottom: 12,
-    width: 24,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: theme.colors.primary,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
+  subModeContainer: {
     alignItems: 'center',
+    marginBottom: 32,
+    marginTop: -8,
+  },
+  segmentControl: {
+    flexDirection: 'row',
+    backgroundColor: '#E2E8F0',
+    borderRadius: 24,
+    padding: 4,
+  },
+  segmentBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: theme.colors.background,
   },
-  hidden: {
-    opacity: 0,
+  segmentBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  headerTitle: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.bold,
+  segmentText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  segmentTextActive: {
     color: theme.colors.text,
+    fontWeight: '700',
   },
-  createTreeLink: {
-    marginTop: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: theme.colors.primary,
-    borderRadius: 4,
-    alignSelf: 'flex-start',
+  inputWrapper: {
+    marginBottom: 24,
   },
-  createTreeLinkText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 12,
+  inputRow: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    gap: 16,
   },
-  scrollContent: {
-    padding: theme.spacing.lg,
-    paddingBottom: 100,
+  textInput: {
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    fontSize: 16,
+    color: '#1E293B',
   },
-  imageContainer: {
-    width: '100%',
-    aspectRatio: 3/4,
-    borderRadius: theme.borderRadius.xl,
-    overflow: 'hidden',
-    marginBottom: theme.spacing.lg,
-    ...theme.shadows.lg,
-    backgroundColor: '#000',
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 8,
   },
-  image: {
-    width: '100%',
-    height: '100%',
+  dropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.02,
+    shadowRadius: 8,
+    elevation: 1,
   },
-  imageOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 100,
+  dropdownContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
   },
-  removeButton: {
-    position: 'absolute',
-    top: theme.spacing.md,
-    right: theme.spacing.md,
+  miniIcon: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  placeholderContainer: {
-    height: 300,
+  dropdownValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  dropdownSub: {
+    fontSize: 13,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  readOnlyField: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     backgroundColor: '#F8FAFC',
-    borderRadius: theme.borderRadius.xl,
-    justifyContent: 'center',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  readOnlyValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#64748B',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    letterSpacing: 0.5,
+  },
+  imageSection: {
+    marginBottom: 32,
+  },
+  placeholderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 32,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#E2E8F0',
     borderStyle: 'dashed',
-    marginBottom: theme.spacing.lg,
   },
-  placeholderIconBg: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: theme.colors.background,
+  placeholderIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#F0FDF4',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: theme.spacing.md,
+    marginBottom: 20,
   },
-  placeholderText: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.bold,
-    color: theme.colors.text,
-    marginBottom: theme.spacing.xs,
-  },
-  placeholderSubtext: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.textSecondary,
-  },
-  
-  // Loading Modal Styles
-  loadingContainer: {
-    backgroundColor: '#FFF',
-    padding: 24,
-    borderRadius: 16,
-    alignItems: 'center',
-    width: '80%',
-    alignSelf: 'center',
-    marginTop: 'auto',
-    marginBottom: 'auto',
-    ...theme.shadows.lg,
-  },
-  loadingText: {
+  placeholderTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#333',
-  },
-  progressBarContainer: {
-    width: '100%',
-    height: 10,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 5,
-    overflow: 'hidden',
+    fontWeight: '800',
+    color: '#1E293B',
     marginBottom: 8,
   },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: theme.colors.primary,
-  },
-  progressPercentage: {
+  placeholderDesc: {
     fontSize: 14,
-    fontWeight: '600',
-    color: theme.colors.primary,
-    marginBottom: 8,
-  },
-  loadingSubtext: {
-    fontSize: 12,
-    color: '#666',
+    color: '#64748B',
     textAlign: 'center',
+    marginBottom: 32,
+    lineHeight: 20,
   },
-
-  buttonContainer: {
+  pickerButtons: {
     flexDirection: 'row',
-    gap: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
+    gap: 12,
+    width: '100%',
   },
-  actionButton: {
+  pickerBtnPrimary: {
     flex: 1,
-    height: 100,
-    borderRadius: theme.borderRadius.xl,
-    ...theme.shadows.md,
-  },
-  actionButtonGradient: {
-    flex: 1,
-    borderRadius: theme.borderRadius.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-  },
-  actionButtonSecondary: {
-    flex: 1,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.xl,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  actionButtonText: {
-    marginTop: theme.spacing.sm,
-    fontSize: theme.fontSize.md,
-    fontWeight: theme.fontWeight.bold,
-    color: '#FFF',
-  },
-  warningCard: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFBEB',
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
-    borderWidth: 1,
-    borderColor: '#FCD34D',
-    alignItems: 'center',
-  },
-  warningContent: {
-    marginLeft: theme.spacing.md,
-    flex: 1,
-  },
-  warningTitle: {
-    fontSize: theme.fontSize.md,
-    fontWeight: theme.fontWeight.bold,
-    color: theme.colors.warning,
-    marginBottom: 2,
-  },
-  warningText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.textSecondary,
-  },
-  subModeWrapper: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  subModeSegmented: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 30,
-    padding: 4,
-  },
-  subModeSegment: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 26,
-  },
-  subModeSegmentActive: {
-    backgroundColor: '#FFFFFF',
-    ...theme.shadows.sm,
-  },
-  subModeSegmentText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: theme.colors.textSecondary,
-  },
-  subModeSegmentTextActive: {
-    color: theme.colors.primary,
-    fontWeight: '700',
-  },
-  readOnlyInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    paddingHorizontal: 16,
+    backgroundColor: theme.colors.primary,
     paddingVertical: 14,
+    borderRadius: 16,
+    gap: 8,
+    shadowColor: theme.colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  pickerBtnTextPrimary: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  pickerBtnSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    paddingVertical: 14,
+    borderRadius: 16,
+    gap: 8,
   },
-  readOnlyText: {
-    fontSize: 16,
-    color: theme.colors.textSecondary,
+  pickerBtnTextSecondary: {
+    color: '#475569',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  previewContainer: {
+    width: '100%',
+    aspectRatio: 3/4,
+    borderRadius: 24,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  previewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  imageInfo: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backdropFilter: 'blur(4px)',
+  },
+  imageInfoText: {
+    color: '#FFFFFF',
+    fontSize: 12,
     fontWeight: '600',
   },
-  helperText: {
-    fontSize: 12,
-    color: theme.colors.textLight,
-    marginTop: 6,
-    marginLeft: 4,
-  },
-  inputContainer: {
-    marginBottom: theme.spacing.lg,
-  },
-  inputLabel: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.textLight,
-    marginBottom: theme.spacing.xs,
-    marginLeft: theme.spacing.xs,
-  },
-  input: {
-    backgroundColor: theme.colors.surface,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    fontSize: theme.fontSize.md,
-  },
-  selectorButton: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  removeImageBtn: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: theme.colors.surface,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    backdropFilter: 'blur(4px)',
   },
-  selectorText: {
-    fontSize: theme.fontSize.md,
-    color: theme.colors.text,
-    marginLeft: theme.spacing.sm,
+  imageBadge: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  imageBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  analyzeButton: {
+    backgroundColor: theme.colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    borderRadius: 20,
+    gap: 12,
+    shadowColor: theme.colors.primary,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  analyzeButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  warningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    padding: 16,
+    borderRadius: 16,
+    marginTop: 24,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  warningText: {
+    fontSize: 14,
+    color: '#B45309',
+    marginBottom: 2,
     fontWeight: '500',
   },
-  
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
+  warningLink: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#B45309',
+    textDecorationLine: 'underline',
   },
-  modalContent: {
-    backgroundColor: theme.colors.surface,
-    borderTopLeftRadius: theme.borderRadius.xl,
-    borderTopRightRadius: theme.borderRadius.xl,
-    paddingTop: theme.spacing.lg,
-    maxHeight: '80%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.lg,
-    marginBottom: theme.spacing.md,
-  },
-  modalTitle: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.bold,
-    color: theme.colors.text,
-  },
-  treeList: {
-    padding: theme.spacing.lg,
-    paddingTop: 0,
-  },
-  treeItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.background,
-    marginBottom: theme.spacing.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  treeItemActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  treeIconBg: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: theme.spacing.md,
-  },
-  treeItemTitle: {
-    fontSize: theme.fontSize.md,
-    fontWeight: 'bold',
-    color: theme.colors.text,
-  },
-  treeItemSubtitle: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.textSecondary,
-  },
-  treeItemTextActive: {
-    color: '#FFF',
-  },
-  emptyList: {
-    alignItems: 'center',
-    padding: theme.spacing.xl,
-  },
-  emptyListText: {
-    fontSize: theme.fontSize.md,
-    color: theme.colors.textSecondary,
-    marginBottom: theme.spacing.lg,
-  },
-  modalFooter: {
-    padding: theme.spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
-  },
-  addNewTreeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.primary,
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface,
-    borderStyle: 'dashed',
-  },
-  addNewTreeText: {
-    marginLeft: theme.spacing.sm,
-    fontSize: theme.fontSize.md,
-    fontWeight: 'bold',
-    color: theme.colors.primary,
-  },
-  createTreeButton: {
-    paddingVertical: theme.spacing.md,
-    paddingHorizontal: theme.spacing.xl,
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.borderRadius.lg,
-  },
-  createTreeButtonText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: theme.fontSize.md,
-  },
-  uploadButton: {
-    marginBottom: theme.spacing.xl,
-  },
-  infoCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.lg,
-    ...theme.shadows.sm,
-  },
-  infoCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: theme.spacing.md,
-  },
-  infoTitle: {
-    fontSize: theme.fontSize.md,
-    fontWeight: theme.fontWeight.bold,
-    color: theme.colors.text,
-    marginLeft: theme.spacing.sm,
-  },
-  tipsList: {
-    gap: theme.spacing.sm,
-  },
-  tipItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  tipText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.textSecondary,
-    marginLeft: theme.spacing.sm,
-  },
-  centerContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: theme.spacing.xl,
-  },
-  lockIcon: {
-    marginBottom: theme.spacing.lg,
-  },
-  lockTitle: {
-    fontSize: theme.fontSize.xxl,
-    fontWeight: theme.fontWeight.bold,
-    color: theme.colors.text,
-    marginBottom: theme.spacing.md,
-  },
-  lockMessage: {
-    fontSize: theme.fontSize.md,
-    color: theme.colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: theme.spacing.xl,
-    lineHeight: 24,
-  },
-  resendButton: {
-    width: '100%',
-  },
-  
-  // Camera & AR Styles
+  // Camera Overlay Styles
   cameraContainer: {
     flex: 1,
-    backgroundColor: 'black',
+    backgroundColor: '#000',
   },
   camera: {
     flex: 1,
   },
   overlayContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
     justifyContent: 'space-between',
-    zIndex: 1,
   },
-  gradientOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  overlayHeader: {
+  cameraHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: 20,
-    paddingTop: 50,
     alignItems: 'center',
-    zIndex: 2,
+    paddingTop: 60,
+    paddingHorizontal: 24,
   },
-  closeCameraButton: {
-    padding: 10,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 20,
+  closeButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
   },
   arBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
+    gap: 8,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
   },
   arText: {
-    color: 'white',
-    marginLeft: 6,
+    color: '#FFFFFF',
     fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+    fontWeight: '700',
   },
-  cameraToggleContainer: {
+  cameraControls: {
+    paddingBottom: 50,
+    alignItems: 'center',
+    gap: 32,
+  },
+  cameraToggleWrapper: {
     flexDirection: 'row',
     backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 30,
+    borderRadius: 24,
     padding: 4,
-    marginBottom: 20, // Space above capture button
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   cameraToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    paddingHorizontal: 20,
     paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 26,
-    gap: 6,
+    borderRadius: 20,
   },
   cameraToggleActive: {
     backgroundColor: theme.colors.primary,
   },
   cameraToggleText: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 13,
+    color: 'rgba(255,255,255,0.6)',
     fontWeight: '600',
+    fontSize: 13,
   },
   cameraToggleTextActive: {
-    color: '#FFF',
+    color: '#FFFFFF',
     fontWeight: '700',
   },
+  shutterButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 5,
+    borderColor: 'rgba(255,255,255,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  shutterInner: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
   guidelinesContainer: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
   },
   viewFinder: {
-    width: 250,
-    height: 400,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: width * 0.75,
+    height: height * 0.55,
     position: 'relative',
   },
   latexViewFinder: {
-    width: 300,
-    height: 300,
+    width: width * 0.75,
+    height: width * 0.75,
+    position: 'relative',
     justifyContent: 'center',
     alignItems: 'center',
-    position: 'relative',
-  },
-  liquidLevelGuide: {
-    width: '80%',
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-    position: 'absolute',
-  },
-  watermarkIcon: {
-    opacity: 0.5,
   },
   corner: {
     position: 'absolute',
-    width: 30,
-    height: 30,
-    borderColor: '#FFF',
-    borderWidth: 3,
+    width: 32,
+    height: 32,
+    borderColor: '#FFFFFF',
+    borderWidth: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.5,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  cornerTL: {
-    top: 0,
-    left: 0,
-    borderRightWidth: 0,
-    borderBottomWidth: 0,
-    borderTopLeftRadius: 16,
-  },
-  cornerTR: {
-    top: 0,
-    right: 0,
-    borderLeftWidth: 0,
-    borderBottomWidth: 0,
-    borderTopRightRadius: 16,
-  },
-  cornerBL: {
-    bottom: 0,
-    left: 0,
-    borderRightWidth: 0,
-    borderTopWidth: 0,
-    borderBottomLeftRadius: 16,
-  },
-  cornerBR: {
-    bottom: 0,
-    right: 0,
-    borderLeftWidth: 0,
-    borderTopWidth: 0,
-    borderBottomRightRadius: 16,
+  cornerTL: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 12 },
+  cornerTR: { top: 0, right: 0, borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 12 },
+  cornerBL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 12 },
+  cornerBR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0, borderBottomRightRadius: 12 },
+  guideInstruction: {
+    color: '#FFFFFF',
+    marginTop: 32,
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   angleGuideContainer: {
     position: 'absolute',
-    top: '50%',
     right: -40,
+    top: '50%',
     alignItems: 'center',
-    transform: [{ translateY: -20 }],
   },
   angleLine: {
-    width: 80,
+    width: 50,
     height: 3,
-    backgroundColor: '#FFD700', // Gold
+    backgroundColor: '#FCD34D',
     transform: [{ rotate: '-30deg' }],
     borderRadius: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.8,
-    shadowRadius: 2,
-    elevation: 5,
   },
   angleText: {
-    color: '#FFD700',
-    marginTop: 15,
+    color: '#FCD34D',
+    marginTop: 6,
     fontSize: 12,
-    fontWeight: 'bold',
-    textShadowColor: 'rgba(0, 0, 0, 0.8)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    fontWeight: '800',
   },
-  instructionContainer: {
-    marginTop: 40,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+  liquidLevelGuide: {
+    width: '100%',
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderStyle: 'dashed',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  guideInstruction: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 14,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  captureContainer: {
-    paddingBottom: 40,
-    alignItems: 'center',
-    zIndex: 2,
-  },
-  captureButtonOuter: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...theme.shadows.md,
-  },
-  captureButtonRing: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    borderWidth: 4,
     borderColor: 'rgba(255,255,255,0.8)',
+    position: 'absolute',
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: '#F8FAFC',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: '80%',
+    paddingTop: 24,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  modalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  captureButtonInner: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: '#FFF',
+  listContent: {
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+  },
+  listItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  listItemActive: {
+    backgroundColor: '#F0FDF4',
+    borderColor: theme.colors.primary,
+    borderWidth: 2,
+  },
+  listIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 4,
+    marginRight: 16,
   },
-  captureButtonCore: {
+  listIconActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  listItemTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  listItemSub: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  listItemTextActive: {
+    color: '#1E293B',
+  },
+  modalFooter: {
+    padding: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    paddingBottom: 40,
+  },
+  addTreeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderStyle: 'dashed',
+    gap: 8,
+  },
+  addTreeBtnText: {
+    color: theme.colors.primary,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  // Loading Overlay
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backdropFilter: 'blur(5px)',
+  },
+  loadingCard: {
+    width: '80%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  loadingTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1E293B',
+    marginBottom: 8,
+  },
+  loadingSub: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 24,
+  },
+  progressBar: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: theme.colors.primary,
+    borderRadius: 4,
+  },
+  // Result Card Styles
+  resultCard: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 6,
+    backgroundColor: '#FFFFFF',
+    marginBottom: 32,
+  },
+  resultGradient: {
+    padding: 24,
+    alignItems: 'center',
+  },
+  resultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    paddingBottom: 20,
+    width: '100%',
+  },
+  resultIconBg: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    borderWidth: 2,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
   },
-
-  // Result View Styles
-  resultContainer: {
+  resultTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: theme.colors.text,
+  },
+  resultDate: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  resultBody: {
+    marginBottom: 32,
+    width: '100%',
+  },
+  resultRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  resultLabel: {
+    fontSize: 15,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  resultValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  recommendationBox: {
+    backgroundColor: '#F8FAFC',
+    padding: 16,
+    borderRadius: 16,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  recommendationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  recommendationTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  recommendationText: {
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 22,
+  },
+  tappabilityBox: {
+    marginTop: 20,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  badge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  badgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  tappabilityReason: {
+    fontSize: 13,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+    marginTop: 8,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 24,
+  },
+  statItem: {
     flex: 1,
-    padding: theme.spacing.lg,
+    backgroundColor: '#F8FAFC',
+    padding: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 6,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  statValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: theme.colors.primary,
+  },
+  statUnit: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  resultActions: {
+    gap: 12,
+    width: '100%',
+  },
+  primaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 16,
+    borderRadius: 16,
+    gap: 8,
+    marginBottom: 8,
+    shadowColor: theme.colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    paddingVertical: 14,
+    width: '100%',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  secondaryButtonText: {
+    color: '#64748B',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  centerContent: {
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.5)', // Subtle backdrop
-  },
-  resultContent: {
-    width: '100%',
-    maxWidth: 360,
-    borderRadius: 32,
-    ...theme.shadows.xl, // Deeper shadow
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#F0FDF4',
-  },
-  resultGradient: {
-    borderRadius: 32,
     padding: 32,
-    alignItems: 'center',
   },
-  resultIconRing: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#ECFDF5',
+  lockIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
-    borderWidth: 6,
-    borderColor: '#FFF',
-    ...theme.shadows.md,
   },
-  resultIconBg: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  resultTitle: {
-    fontSize: 26,
+  lockTitle: {
+    fontSize: 22,
     fontWeight: '800',
-    color: theme.colors.text,
+    color: '#1E293B',
     marginBottom: 12,
-    textAlign: 'center',
-    letterSpacing: -0.5,
   },
-  resultMessage: {
+  lockMessage: {
     fontSize: 15,
-    color: theme.colors.textSecondary,
+    color: '#64748B',
     textAlign: 'center',
     marginBottom: 32,
     lineHeight: 22,
-    paddingHorizontal: 10,
   },
-  resultStatsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 20,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
+  resendButton: {
     width: '100%',
-    marginBottom: 32,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-  },
-  resultStat: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  resultDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: '#E2E8F0',
-  },
-  resultStatLabel: {
-    fontSize: 11,
-    textTransform: 'uppercase',
-    color: theme.colors.textLight,
-    marginBottom: 6,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  resultStatValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: theme.colors.text,
-  },
-  resultActions: {
-    width: '100%',
-    gap: 16,
-  },
-  resultButtonPrimary: {
-    width: '100%',
-    height: 56,
-    borderRadius: 16,
-    ...theme.shadows.md,
-  },
-  resultButtonGradient: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 16,
-    gap: 8,
-  },
-  resultButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  resultButtonSecondary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 16,
-    backgroundColor: '#FFF',
-    borderWidth: 2,
-    borderColor: '#F1F5F9',
-    gap: 8,
-  },
-  resultButtonSecondaryText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: theme.colors.primary,
   },
 });
 

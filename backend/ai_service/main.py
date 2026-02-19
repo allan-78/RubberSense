@@ -1,11 +1,25 @@
 import sys
 import json
+# print("DEBUG: START")
 import cv2
 import numpy as np
 import requests
 import os
+import time
 from io import BytesIO
-from PIL import Image
+
+# Export helper function for testing
+__all__ = ['map_trunk_disease']
+
+# Import the disease mapping logic
+try:
+    from disease_mapping import map_trunk_disease
+except ImportError:
+    # Fallback if running from a different directory context or if file missing
+    def map_trunk_disease(disease_name):
+        return disease_name, "unknown", "Mapping module missing."
+
+# print("DEBUG: IMPORTS DONE")
 
 try:
     from ultralytics import YOLO
@@ -13,32 +27,279 @@ try:
 except ImportError:
     YOLO_AVAILABLE = False
     sys.stderr.write("Ultralytics not installed. Falling back to heuristic analysis.\n")
+except Exception as e:
+    YOLO_AVAILABLE = False
+    sys.stderr.write(f"Ultralytics import error: {e}\n")
+
+# print("DEBUG: AFTER YOLO IMPORT")
+
+# Global model cache
+LEAF_MODEL = None
+CLS_MODEL = None
+LATEX_MODEL = None
+TRUNK_MODEL = None
+
+def get_leaf_model():
+    global LEAF_MODEL
+    if LEAF_MODEL is None and YOLO_AVAILABLE:
+        try:
+            # UPDATED: Pointing to Leaf.pt as requested
+            model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Leaf.pt')
+            if not os.path.exists(model_path):
+                 # Fallback to best.pt if Leaf.pt is missing (safety)
+                 model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/best.pt')
+            
+            if os.path.exists(model_path):
+                LEAF_MODEL = YOLO(model_path)
+                sys.stderr.write(f"✅ [Python ML] Loaded Leaf Model: {model_path}\n")
+            else:
+                sys.stderr.write(f"❌ [Python ML] Leaf model not found at {model_path}\n")
+        except Exception as e:
+            sys.stderr.write(f"❌ [Python ML] Failed to load leaf model: {e}\n")
+    return LEAF_MODEL
+
+def get_trunk_model():
+    global TRUNK_MODEL
+    if TRUNK_MODEL is None and YOLO_AVAILABLE:
+        try:
+            model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Trunks.pt')
+            if os.path.exists(model_path):
+                TRUNK_MODEL = YOLO(model_path)
+                sys.stderr.write(f"✅ [Python ML] Loaded Trunk Model: {model_path}\n")
+            else:
+                sys.stderr.write(f"❌ [Python ML] Trunk model not found at {model_path}\n")
+        except Exception as e:
+            sys.stderr.write(f"❌ [Python ML] Failed to load trunk model: {e}\n")
+    return TRUNK_MODEL
+
+def get_latex_model():
+    global LATEX_MODEL
+    if LATEX_MODEL is None and YOLO_AVAILABLE:
+        try:
+            model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Latex.pt')
+            if os.path.exists(model_path):
+                LATEX_MODEL = YOLO(model_path)
+                sys.stderr.write(f"✅ [Python ML] Loaded Latex Model: {model_path}\n")
+            else:
+                sys.stderr.write(f"❌ [Python ML] Latex model not found at {model_path}\n")
+        except Exception as e:
+            sys.stderr.write(f"❌ [Python ML] Failed to load latex model: {e}\n")
+    return LATEX_MODEL
+
+def get_cls_model():
+    global CLS_MODEL
+    if CLS_MODEL is None and YOLO_AVAILABLE:
+        try:
+            CLS_MODEL = YOLO('yolo11n-cls.pt')
+        except Exception as e:
+            sys.stderr.write(f"❌ [Python ML] Failed to load CLS model: {e}\n")
+    return CLS_MODEL
+
+def get_groq_analysis(disease_name, confidence, spot_count, color_name):
+    """
+    Calls Groq API to get detailed analysis and recommendations.
+    """
+    api_key = os.environ.get("GROQ_API_KEY")
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    
+    prompt = f"""
+    You are an expert plant pathologist specializing in rubber trees (Hevea brasiliensis).
+    Analyze this leaf scan result:
+    - Detected Condition: {disease_name}
+    - AI Confidence: {confidence:.1f}%
+    - Visual Traits: {color_name} color, {spot_count} spots detected.
+    
+    Provide a valid JSON response with these keys:
+    1. "diagnosis": A detailed scientific explanation of the condition.
+    2. "treatment": Specific chemical (fungicide names) and organic treatments.
+    3. "prevention": Actionable steps to prevent spread or recurrence.
+    4. "severity_reasoning": Why this is low/medium/high severity based on the spot count and disease type.
+    5. "tappability_advice": Can this tree be tapped? Why/Why not?
+
+    Do not include markdown formatting, just the raw JSON object.
+    """
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "response_format": {"type": "json_object"}
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=15)
+        if response.status_code == 200:
+            content = response.json()['choices'][0]['message']['content']
+            return json.loads(content)
+    except Exception as e:
+        sys.stderr.write(f"⚠️ [Groq API] Analysis failed: {e}\n")
+    
+    return None
+
+def get_groq_latex_analysis(latex_type, confidence, contamination_level, drc):
+    """
+    Calls Groq API to get detailed analysis and recommendations for latex quality.
+    """
+    api_key = os.environ.get("GROQ_API_KEY")
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    
+    prompt = f"""
+    You are an expert rubber technologist specializing in natural rubber latex quality control.
+    Analyze this latex scan result:
+    - Detected Type: {latex_type}
+    - AI Confidence: {confidence:.1f}%
+    - Contamination Level: {contamination_level}
+    - Estimated Dry Rubber Content (DRC): {drc}%
+    
+    Provide a valid JSON response with these keys:
+    1. "quality_assessment": A technical assessment of the latex quality based on the type and visual indicators.
+    2. "processing_advice": Specific steps to process this type of latex for maximum yield/quality.
+    3. "contamination_handling": How to treat or filter the latex if contamination is present.
+    4. "market_value_insight": Brief comment on the potential market grade (e.g., Centrifuged Latex, USS, RSS).
+    5. "preservation_tips": Chemical recommendations (e.g., Ammonia, TMTD) to prevent coagulation before processing.
+    6. "market_analysis": {{
+        "trend": "stable" | "increasing" | "decreasing",
+        "estimated_price_range_php": "min-max" (e.g., "50-60"),
+        "reasoning": "Reason for the price estimation based on quality and general market knowledge."
+    }}
+
+    Do not include markdown formatting, just the raw JSON object.
+    """
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "response_format": {"type": "json_object"}
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=15)
+        if response.status_code == 200:
+            content = response.json()['choices'][0]['message']['content']
+            return json.loads(content)
+    except Exception as e:
+        sys.stderr.write(f"⚠️ [Groq API] Latex Analysis failed: {e}\n")
+    
+    return None
+
+def get_dominant_color_name(img, mask=None):
+    """
+    Determines the dominant color name using HSV averages.
+    """
+    if img is None: return "Unknown"
+    
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    
+    if mask is not None:
+        mean_color = cv2.mean(hsv, mask=mask)[:3]
+    else:
+        mean_color = cv2.mean(hsv)[:3]
+        
+    h, s, v = mean_color
+    
+    # H ranges 0-179 in OpenCV
+    if s < 20 and v > 200: return "White/Pale"
+    if v < 30: return "Black/Dark"
+    if s < 30: return "Grayish"
+    
+    if h < 10 or h > 170: return "Red/Brown"
+    elif 10 <= h < 25: return "Orange"
+    elif 25 <= h < 35: return "Yellow"
+    elif 35 <= h < 85: return "Green"
+    elif 85 <= h < 130: return "Blue/Dark Green"
+    elif 130 <= h < 170: return "Purple/Brown"
+    
+    return "Discolored"
+
+def count_spots(img):
+    """
+    Counts dark spots on a leaf image using image processing.
+    Returns count and the visualization image with contours drawn.
+    """
+    if img is None:
+        return 0, None
+    
+    # Convert to HSV color space
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    
+    # Pre-processing: Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Invert so dark spots become bright
+    gray_inv = cv2.bitwise_not(gray)
+    
+    # Threshold to isolate the spots
+    # We assume spots are significantly darker than the leaf
+    _, thresh = cv2.threshold(gray_inv, 200, 255, cv2.THRESH_BINARY)
+    
+    # Find contours
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Filter small noise
+    min_spot_area = 10
+    spot_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_spot_area]
+    
+    # Draw contours on image for visualization
+    vis_img = img.copy()
+    cv2.drawContours(vis_img, spot_contours, -1, (0, 0, 255), 2)
+    
+    return len(spot_contours), vis_img
 
 def classify_content(img):
     """
-    Uses YOLOv11-cls (ImageNet) to check if the image contains a tree, leaf, or trunk.
-    Returns: { 'is_tree': bool, 'primary_part': 'trunk' | 'leaf' | 'whole_tree' | 'unknown', 'confidence': float }
+    PRIORITIZES the specialized Leaf Model (best.pt) as the main classifier.
+    Falls back to YOLOv11-cls (ImageNet) only if Leaf Model is unsure or fails.
     """
+    
+    primary_part = 'unknown'
+    confidence = 0.0
+    
+    # 1. TRY LEAF MODEL FIRST (User Instruction: Main Classifier is best.pt)
+    leaf_model = get_leaf_model()
+    if leaf_model:
+        try:
+            # Run inference
+            results = leaf_model(img, verbose=False)
+            probs = results[0].probs
+            top1_conf = float(probs.top1conf.item())
+            
+            # If Leaf Model is confident (> 25%), we assume it IS a leaf (healthy or diseased)
+            if top1_conf > 0.25:
+                sys.stderr.write(f"✅ [Python ML] Leaf Model identified content with confidence: {top1_conf:.2f}\n")
+                return {'is_tree': True, 'primary_part': 'leaf', 'confidence': top1_conf}
+                
+        except Exception as e:
+             sys.stderr.write(f"⚠️ [Python ML] Leaf Model classification check failed: {e}\n")
+
+    # 2. Fallback to Generic Classifier (ImageNet) if Leaf Model didn't catch it
     if not YOLO_AVAILABLE:
         return {'is_tree': True, 'primary_part': 'whole_tree', 'confidence': 1.0}
 
     try:
-        # Load classification model (will download if not exists)
-        model = YOLO('yolo11n-cls.pt') 
+        model = get_cls_model()
+        if not model:
+             return {'is_tree': True, 'primary_part': 'whole_tree', 'confidence': 1.0}
+
         results = model(img, verbose=False)
         
         # Check top 5 classes
         top5 = results[0].probs.top5
         names = results[0].names
         
-        # ImageNet keywords
         trunk_keywords = ['bark', 'trunk', 'wood', 'log']
         leaf_keywords = ['leaf', 'foliage', 'plant', 'flower', 'green']
         tree_keywords = ['tree', 'ficus', 'rubber', 'forest']
-        
-        primary_part = 'unknown'
-        is_tree_found = False
-        confidence = 0.0
         
         trunk_score = 0
         leaf_score = 0
@@ -50,17 +311,13 @@ def classify_content(img):
             
             if any(k in class_name for k in trunk_keywords):
                 trunk_score += score
-                is_tree_found = True
             elif any(k in class_name for k in leaf_keywords):
                 leaf_score += score
-                is_tree_found = True
             elif any(k in class_name for k in tree_keywords):
                 tree_score += score
-                is_tree_found = True
                 
             confidence = max(confidence, score)
             
-        # Determine primary part
         if trunk_score > leaf_score and trunk_score > tree_score:
             primary_part = 'trunk'
         elif leaf_score > trunk_score and leaf_score > tree_score:
@@ -68,11 +325,10 @@ def classify_content(img):
         elif tree_score > 0:
             primary_part = 'whole_tree'
         
-        # Heuristic fallback if confidence is low but looks green (likely leaf)
+        # Heuristic fallback if CLS model failed or is unsure
         if primary_part == 'unknown' or confidence < 0.2:
-            # Simple color check: Is it mostly green?
+            # Check for green color dominance
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            # Green range
             lower_green = np.array([35, 40, 40])
             upper_green = np.array([85, 255, 255])
             mask = cv2.inRange(hsv, lower_green, upper_green)
@@ -80,10 +336,8 @@ def classify_content(img):
             
             if green_ratio > 0.3:
                 primary_part = 'leaf'
-                is_tree_found = True
                 confidence = max(confidence, 0.6)
-            
-        # Lower threshold for "nature" scenes
+
         if confidence > 0.1: 
             return {'is_tree': True, 'primary_part': primary_part, 'confidence': confidence}
             
@@ -94,7 +348,14 @@ def classify_content(img):
 
 def download_image(url):
     try:
-        response = requests.get(url)
+        if os.path.exists(url):
+            img = cv2.imread(url)
+            if img is None:
+                raise ValueError(f"Failed to read local image: {url}")
+            return img
+        
+        headers = {'User-Agent': 'RubberSense-AI/1.0'}
+        response = requests.get(url, headers=headers)
         response.raise_for_status()
         image_array = np.asarray(bytearray(response.content), dtype=np.uint8)
         img = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
@@ -105,403 +366,208 @@ def download_image(url):
         sys.stderr.write(f"Error downloading image: {str(e)}\n")
         return None
 
-def analyze_latex(img):
-    # Convert to HSV for color analysis
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    
-    # Calculate average color
-    avg_color_per_row = np.average(img, axis=0)
-    avg_color = np.average(avg_color_per_row, axis=0) # BGR
-    
-    # Heuristics for Latex Quality
-    # Latex is white. 
-    # High Value (Brightness), Low Saturation.
-    
-    mean_saturation = np.mean(hsv[:, :, 1])
-    mean_value = np.mean(hsv[:, :, 2])
-    
-    # Contamination detection (dark spots)
-    # Threshold to find dark spots
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
-    contamination_pixels = cv2.countNonZero(thresh)
-    total_pixels = img.shape[0] * img.shape[1]
-    contamination_ratio = contamination_pixels / total_pixels
-    
-    # Determine Grade
-    grade = 'A'
-    description = "Excellent quality, pure white latex."
-    drc = 40.0 # Base DRC
-    
-    if contamination_ratio > 0.05:
-        grade = 'D'
-        description = "High contamination detected."
-        drc -= 10
-    elif mean_saturation > 50: # Too colorful (yellow/brown)
-        grade = 'C'
-        description = "Discolored latex, potential oxidation."
-        drc -= 5
-    elif mean_value < 150: # Too dark
-        grade = 'B'
-        description = "Darker latex, possible impurities."
-        drc -= 2
-        
-    # Final DRC adjustment based on "whiteness"
-    drc += (mean_value / 255.0) * 5
-    drc = round(min(max(drc, 25.0), 45.0), 1)
-    
-    # Map Grade to Quality Enum
-    quality_map = {'A': 'excellent', 'B': 'good', 'C': 'fair', 'D': 'poor'}
-    quality = quality_map.get(grade, 'good')
-
-    color_analysis = {
-        "primaryColor": "white" if mean_saturation < 30 else "yellowish",
-        "rgb": {"r": int(avg_color[2]), "g": int(avg_color[1]), "b": int(avg_color[0])},
-        "hex": "#{:02x}{:02x}{:02x}".format(int(avg_color[2]), int(avg_color[1]), int(avg_color[0]))
-    }
-
-    quality_classification = {
-        "grade": grade,
-        "confidence": round(float(np.random.uniform(85, 98)), 1), # Simulated confidence
-        "description": description
-    }
-
-    product_recommendation = {
-        "recommendedProduct": "RSS (Ribbed Smoked Sheet)" if grade in ['A', 'B'] else "TSR (Technically Specified Rubber)",
-        "reason": "High purity suitable for sheets" if grade in ['A', 'B'] else "Lower grade suitable for block rubber",
-        "expectedQuality": f"Grade {grade}"
-    }
-
-    return {
-        # Schema Compatibility: Scan Model (New)
-        "latexColorAnalysis": color_analysis,
-        "latexQualityPrediction": {
-            "quality": quality,
-            "dryRubberContent": drc,
-            "estimatedPrice": 0 # Placeholder, calculated in Node.js
-        },
-        "productivityRecommendation": {
-            "status": "optimal",
-            "suggestions": ["Keep tapping."]
-        },
-        "latexFlowIntensity": "high" if drc > 35 else "medium",
-
-        # Schema Compatibility: LatexBatch Model (Old)
-        "colorAnalysis": color_analysis,
-        "qualityClassification": quality_classification,
-        "productRecommendation": product_recommendation,
-
-        # Shared Fields
-        "contaminationDetection": {
-            "hasWater": bool(mean_value < 200), # Heuristic: diluted latex is less bright/opaque
-            "hasContamination": bool(contamination_ratio > 0.01),
-            "contaminationLevel": "high" if contamination_ratio > 0.05 else ("low" if contamination_ratio > 0.01 else "none"),
-            "contaminantTypes": ["dirt"] if contamination_ratio > 0.01 else []
-        },
-        "quantityEstimation": {
-            "volume": round(float(np.random.uniform(2.0, 5.0)), 1), # Volume estimation requires depth/reference, simulated for now
-            "weight": 0, # Calculated later
-            "confidence": 85.0
-        },
-        "productYieldEstimation": {
-            "dryRubberContent": drc,
-            "estimatedYield": round(drc * 0.01 * 3.0, 2), # Assuming ~3L volume for calc
-            "productType": "TSR20" if grade in ['C', 'D'] else "RSS"
-        }
-    }
-
-def analyze_trunk(img, has_disease, disease_name, severity):
-    # Grayscale for texture
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Edge detection for texture/bark analysis
-    edges = cv2.Canny(gray, 100, 200)
-    edge_density = np.sum(edges) / (img.shape[0] * img.shape[1])
-    
-    # Texture classification
-    texture = "rough" if edge_density > 0.05 else "smooth"
-
-    # Mock "Girth" - width of the trunk
-    # Assume the trunk is the largest vertical object
-    # This is hard without segmentation, so we simulate based on image width
-    girth_est = img.shape[1] * 0.4 * (30.0 / 1000.0) # Mock scale
-    
-    # Immature Tree Logic (Scope Addition)
-    # If girth is small, it's immature
-    is_immature = False
-    girth_cm = round(float(np.random.uniform(30, 110)), 1)
-    
-    # 20% chance of being immature for demo purposes, or based on girth
-    if girth_cm < 45: 
-        is_immature = True
-        girth_cm = round(float(np.random.uniform(20, 40)), 1)
-
-    health_status = 'diseased' if has_disease else 'healthy'
-    damages = []
-    if has_disease:
-        damages.append(disease_name)
-
-    return {
-        "girth": girth_cm, # cm
-        "diameter": round(girth_cm / 3.14159, 1), # cm
-        "texture": texture,
-        "color": "brown",
-        "healthStatus": health_status,
-        "damages": damages,
-        "is_immature": is_immature
-    }
-
-def analyze_leaf(img, has_disease, disease_name, severity):
-    # Leaf specific analysis
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    
-    # Check for yellowing (Chlorosis)
-    # Yellow is around H=30
-    lower_yellow = np.array([20, 100, 100])
-    upper_yellow = np.array([40, 255, 255])
-    yellow_mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
-    yellow_ratio = cv2.countNonZero(yellow_mask) / (img.shape[0] * img.shape[1])
-    
-    # Check for brown spots (Necrosis)
-    # Brown is low saturation orange/red
-    # This is tricky in HSV, simplified for now
-    
-    health_status = 'healthy'
-    color = 'green'
-    spot_count = 0
-    
-    if yellow_ratio > 0.1:
-        health_status = 'diseased'
-        color = 'yellowing'
-        if not has_disease: # Add generic yellowing if no specific disease found
-            has_disease = True
-            disease_name = "Chlorosis (Nutrient Deficiency)"
-            severity = "medium"
-
-    if has_disease:
-        health_status = 'diseased'
-        spot_count = np.random.randint(5, 50) # Simulated spot count for now
-    
-    diseases = []
-    if has_disease:
-        diseases.append({
-            "name": disease_name,
-            "confidence": 95.0,
-            "severity": severity
-        })
-
-    return {
-        "healthStatus": health_status,
-        "color": color,
-        "spotCount": spot_count,
-        "diseases": diseases
-    }
-
-def analyze_tree(img, user_hint=None):
-    # 1. Classification (Trunk vs Leaf vs Whole Tree)
-    classification = classify_content(img)
-    
-    # Override if user provided a hint
-    if user_hint:
-        user_hint = user_hint.strip().lower()
-        if user_hint in ['leaf', 'trunk']:
-            classification['primary_part'] = user_hint
-            classification['is_tree'] = True # Assume user is correct for now
-            classification['confidence'] = 1.0 # Trust user
-    
-    if not classification['is_tree']:
-        return {
-            "error": "Image does not appear to contain a tree or plant part.",
-            "confidence": classification['confidence']
-        }
-
-    primary_part = classification['primary_part'] # 'trunk', 'leaf', 'whole_tree', 'unknown'
-
-    # 2. Disease Detection (Common for both, but we interpret differently)
-    # ... (Keep existing YOLO inference logic, but tailored) ...
-    # Try Custom YOLO inference for Disease
-    possible_paths = [
-        os.path.join(os.path.dirname(__file__), 'models', 'rubber_tree_model', 'weights', 'best.pt'),
-        os.path.join(os.path.dirname(__file__), '..', '..', 'yolo11n.pt'), # Check root directory
-        os.path.join(os.path.dirname(__file__), '..', 'yolo11n.pt') # Check backend directory
-    ]
-    
-    model_path = None
-    for p in possible_paths:
-        if os.path.exists(p):
-            model_path = p
-            break
-    
-    disease_detections = []
-    has_disease = False
-    disease_name = "No disease detected"
-    severity = "none"
-    recommendation = "Regular monitoring."
-    
-    if YOLO_AVAILABLE and model_path:
-        try:
-            model = YOLO(model_path)
-            results = model(img, verbose=False) # Suppress output
-            
-            for r in results:
-                boxes = r.boxes
-                for box in boxes:
-                    cls = int(box.cls[0])
-                    conf = float(box.conf[0])
-                    if hasattr(model, 'names'):
-                        name = model.names[cls]
-                    else:
-                        name = f"Class {cls}"
-                    
-                    is_generic = 'person' in model.names.values()
-                    if is_generic: continue
-                    
-                    if conf > 0.25: # Confidence threshold
-                        disease_detections.append({
-                            "name": name,
-                            "confidence": round(conf * 100, 1),
-                            "box": box.xywh.tolist()
-                        })
-                        
-            if disease_detections:
-                has_disease = True
-                top_disease = max(disease_detections, key=lambda x: x['confidence'])
-                disease_name = top_disease['name']
-                severity = "high" if top_disease['confidence'] > 80 else "medium"
-                recommendation = f"Treat {disease_name} immediately."
-                
-        except Exception as e:
-            sys.stderr.write(f"YOLO inference failed: {e}\n")
-
-    # Fallback to Simulation if no detections
-    if not disease_detections:
-        # Disease detection (Color based simulation for demo)
-        disease_chance = np.random.random()
-        if disease_chance < 0.3:
-            has_disease = True
-            # Differentiate diseases based on part
-            if primary_part == 'leaf':
-                disease_types = [
-                    ("Leaf Blight", "low", "Apply foliar fungicide spray."),
-                    ("Powdery Mildew", "medium", "Use sulfur-based fungicides."),
-                    ("Bird's Eye Spot", "low", "Monitor nutrient levels.")
-                ]
-            else: # Trunk or whole tree
-                disease_types = [
-                    ("White Root Rot", "high", "Immediate fungicide treatment required. Isolate tree."),
-                    ("Pink Disease", "medium", "Prune affected branches and apply Bordeaux mixture."),
-                    ("Mouldy Rot", "high", "Stop tapping, apply fungicide to panel.")
-                ]
-            
-            selected_disease = disease_types[int(np.random.choice(len(disease_types)))]
-            disease_name = selected_disease[0]
-            severity = selected_disease[1]
-            recommendation = selected_disease[2]
-
-    # 3. Analyze based on part
-    trunk_data = {}
-    leaf_data = {}
-    is_immature = False # Default
-
-    if primary_part == 'leaf':
-        leaf_data = analyze_leaf(img, has_disease, disease_name, severity)
-        # Trunk data removed as requested for leaf mode
-        trunk_data = None
-    elif primary_part == 'trunk':
-        trunk_data = analyze_trunk(img, has_disease, disease_name, severity)
-        is_immature = trunk_data.get('is_immature', False)
-        # Leaf data removed as requested for trunk mode
-        leaf_data = None
-    else: # Whole tree or unknown (do both roughly)
-        trunk_data = analyze_trunk(img, has_disease, disease_name, severity)
-        is_immature = trunk_data.get('is_immature', False)
-        # Assume leaves are also healthy/diseased based on overall result
-        leaf_data = {
-             "healthStatus": 'diseased' if has_disease else 'healthy',
-             "color": "green",
-             "spotCount": 0,
-             "diseases": [{"name": disease_name, "confidence": 90, "severity": severity}] if has_disease else []
-        }
-
-    # Construct Final Response
-
-    # 5. Latex Quality Prediction (Tree-based)
-    # Infer from health and maturity
-    pred_quality = "excellent"
-    pred_drc = 40.0
-    if has_disease:
-        if severity == "high":
-            pred_quality = "poor"
-            pred_drc = 25.0
-        else:
-            pred_quality = "fair"
-            pred_drc = 32.0
-    elif is_immature:
-        pred_quality = "good" # Young trees have good quality but low volume
-        pred_drc = 35.0
-
-    # 6. Latex Flow Intensity Estimation
-    # Infer from girth and health
-    flow_intensity = "medium"
-    if is_immature:
-        flow_intensity = "low"
-    elif has_disease and severity == "high":
-        flow_intensity = "low"
-    else:
-        # Healthy mature tree
-        girth = trunk_data.get('girth', 50) if trunk_data else 50
-        if girth > 80:
-            flow_intensity = "very_high"
-        elif girth > 60:
-            flow_intensity = "high"
-
-    # 7. Productivity Status & Recommendation
-    prod_status = "optimal"
+def generate_productivity_recommendation(health_status, disease_name, tappable, severity):
+    status = "optimal"
     suggestions = []
     
-    if has_disease:
-        prod_status = "critical" if severity == "high" else "at_risk"
-        suggestions.append(f"Treat {disease_name} to restore productivity.")
-    elif is_immature:
-        prod_status = "growing"
-        suggestions.append("Continue monitoring growth. Not ready for tapping.")
+    if health_status == 'healthy':
+        status = "optimal"
+        suggestions = [
+            "Routine maintenance: Ensure regular weeding around the base.",
+            "Fertilizer: Apply standard NPK fertilizer schedule.",
+            "Tapping: Safe to tap if girth permits (>45cm).",
+            "Monitor: Check weekly for any signs of new spots."
+        ]
     else:
-        suggestions.append("Maintain regular tapping schedule.")
-        if flow_intensity == "high" or flow_intensity == "very_high":
-             suggestions.append("Consider stimulation for sustained yield.")
+        status = "at_risk" if severity in ['low', 'moderate'] else "critical"
+        
+        # Disease specific suggestions
+        d_name = disease_name.lower()
+        if 'mildew' in d_name:
+             suggestions.append("Apply sulfur-based fungicide immediately.")
+             suggestions.append("Prune heavily infected branches to increase airflow.")
+        elif 'spot' in d_name:
+             suggestions.append("Apply copper-based fungicide.")
+             suggestions.append("Remove and burn fallen infected leaves.")
+        elif 'blight' in d_name:
+             suggestions.append("Isolate the tree to prevent spread.")
+             suggestions.append("Avoid tapping until fully recovered.")
+        else:
+             suggestions.append(f"Consult local agricultural extension for {disease_name} treatment.")
+             
+        if severity == 'critical':
+             suggestions.append("STOP TAPPING immediately to reduce stress.")
+             suggestions.append("Consider quarantine measures.")
+        
+        suggestions.append("Improve soil drainage if waterlogging is suspected.")
 
     return {
-        "treeIdentification": {
-            "isRubberTree": True,
-            "confidence": round(classification['confidence'] * 100, 1),
-            "maturity": "immature" if is_immature else "mature",
-            "detectedPart": primary_part # 'trunk', 'leaf', 'whole_tree'
-        },
-        "trunkAnalysis": trunk_data,
-        "leafAnalysis": leaf_data,
-        "diseaseDetection": [
-            {
-                "name": disease_name,
-                "confidence": 92.0 if has_disease else 98.0,
-                "severity": severity,
-                "recommendation": recommendation
+        "status": status,
+        "suggestions": suggestions
+    }
+
+def analyze_leaf_with_model(img, image_path_for_saving):
+    """
+    Uses the trained Leaf Disease Model (Leaf.pt) for analysis.
+    Integrates Groq API for detailed insights.
+    """
+    model = get_leaf_model()
+    
+    # Default values
+    disease_name = "Unknown"
+    confidence = 0.0
+    severity = "low"
+    spot_count = 0
+    recommendation = "Maintain regular monitoring."
+    processed_image_path = None
+    color_name = "Green"
+    
+    if model:
+        try:
+            results = model(img, verbose=False)
+            probs = results[0].probs
+            top1_index = probs.top1
+            disease_name = results[0].names[top1_index]
+            confidence = float(probs.top1conf.item()) * 100
+            
+            # --- Visual Analysis ---
+            # 1. Spot Counting
+            spot_count, spotted_img = count_spots(img)
+            vis_img = spotted_img if spotted_img is not None else img.copy()
+            
+            # 2. Color Analysis
+            color_name = get_dominant_color_name(img)
+            
+            # --- Severity Logic ---
+            label_text = f"{disease_name.upper()} ({confidence:.1f}%)"
+            
+            if disease_name.lower() == 'healthy':
+                severity = "none"
+                recommendation = "Tree is healthy. Continue routine care."
+                color_cv = (0, 255, 0) # Green
+            else:
+                label_text += f" | Spots: {spot_count}"
+                
+                # Dynamic severity based on spot count and disease type
+                if spot_count > 50:
+                    severity = "critical"
+                    color_cv = (0, 0, 255) # Red
+                elif spot_count > 20:
+                    severity = "high"
+                    color_cv = (0, 165, 255) # Orange
+                else:
+                    severity = "moderate"
+                    color_cv = (0, 255, 255) # Yellow
+
+            # --- AI Insights (Groq) ---
+            sys.stderr.write(f"🧠 [Python ML] Requesting detailed analysis from Groq for {disease_name}...\n")
+            ai_insights = get_groq_analysis(disease_name, confidence, spot_count, color_name)
+            
+            if ai_insights:
+                raw_treatment = ai_insights.get("treatment", recommendation)
+                if isinstance(raw_treatment, list):
+                    recommendation = "; ".join(raw_treatment)
+                elif isinstance(raw_treatment, dict):
+                    # Flatten dict to string
+                    parts = []
+                    for k, v in raw_treatment.items():
+                        val_str = ", ".join(v) if isinstance(v, list) else str(v)
+                        parts.append(f"{k.title()}: {val_str}")
+                    recommendation = " | ".join(parts)
+                else:
+                    recommendation = str(raw_treatment)
+                
+                # Add AI reasoning to severity if available
+                severity_reasoning = ai_insights.get("severity_reasoning", "")
+                
+            # Cap confidence for display
+            if confidence >= 100.0: confidence = 99.9
+
+            # Draw text on image
+            cv2.putText(vis_img, label_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_cv, 2)
+            
+            # Save processed image
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            temp_dir = os.path.join(script_dir, 'temp_output')
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+                
+            timestamp = int(time.time())
+            processed_filename = f"processed_{timestamp}_{os.path.basename(image_path_for_saving)}"
+            if 'http' in processed_filename: # Sanitize
+                processed_filename = f"processed_{timestamp}.jpg"
+                
+            processed_image_path = os.path.join(temp_dir, processed_filename)
+            cv2.imwrite(processed_image_path, vis_img)
+            
+            # --- Final Response Construction ---
+            # Prepare prevention suggestions (flatten if needed)
+            prevention_raw = ai_insights.get("prevention", "Monitor regularly.") if ai_insights else "Monitor regularly."
+            prevention_list = []
+            if isinstance(prevention_raw, list):
+                prevention_list = [str(p) for p in prevention_raw]
+            elif isinstance(prevention_raw, dict):
+                for k, v in prevention_raw.items():
+                    val_str = ", ".join(v) if isinstance(v, list) else str(v)
+                    prevention_list.append(f"{k.title()}: {val_str}")
+            else:
+                prevention_list = [str(prevention_raw)]
+
+            tappability_advice = ai_insights.get("tappability_advice", "Check health before tapping.") if ai_insights else "Check health before tapping."
+
+            return {
+                "diseaseDetection": [{
+                    "name": disease_name,
+                    "confidence": confidence,
+                    "severity": severity,
+                    "recommendation": recommendation,
+                    "ai_diagnosis": ai_insights.get("diagnosis", "No detailed diagnosis available.") if ai_insights else None
+                }],
+                "leafAnalysis": {
+                    "healthStatus": "healthy" if disease_name.lower() == 'healthy' else "diseased",
+                    "spotCount": spot_count,
+                    "color": color_name,
+                    "detailed_analysis": ai_insights # Include full AI object
+                },
+                "processed_image_path": processed_image_path,
+                # Use AI advice for productivity if available, else generate default
+                "productivityRecommendation": {
+                    "status": "optimal" if severity == "none" else "at_risk",
+                    "suggestions": prevention_list + [tappability_advice] if ai_insights else generate_productivity_recommendation(
+                        "healthy" if disease_name.lower() == 'healthy' else "diseased", 
+                        disease_name, 
+                        disease_name.lower() == 'healthy', 
+                        severity
+                    )["suggestions"]
+                }
             }
-        ] + disease_detections,
-        "tappabilityAssessment": {
-            "isTappable": not is_immature and not (has_disease and severity == "high") and primary_part != 'leaf',
-            "score": 30 if is_immature else (40 if (has_disease and severity == "high") else 85),
-            "reason": "Image only shows leaves." if primary_part == 'leaf' else ("Tree is too young." if is_immature else ("Tree has severe disease." if (has_disease and severity == "high") else "Good condition for tapping."))
+
+        except Exception as e:
+            sys.stderr.write(f"Leaf model inference failed: {e}\n")
+            # Return basic error structure but try to survive
+            return {
+                "diseaseDetection": [{"name": "Error", "confidence": 0, "severity": "unknown", "recommendation": "Analysis failed."}],
+                "leafAnalysis": {
+                    "healthStatus": "unknown",
+                    "spotCount": 0,
+                    "color": "Unknown",
+                    "detailed_analysis": None
+                },
+                "processed_image_path": None,
+                "productivityRecommendation": {"status": "unknown", "suggestions": []}
+            }
+    
+    # Fallback if model load failed
+    return {
+        "diseaseDetection": [{"name": "System Error", "confidence": 0, "severity": "unknown", "recommendation": "Model unavailable."}],
+        "leafAnalysis": {
+            "healthStatus": "unknown",
+            "spotCount": 0,
+            "color": "Unknown",
+            "detailed_analysis": None
         },
-        "latexQualityPrediction": {
-            "quality": pred_quality,
-            "dryRubberContent": pred_drc,
-            "estimatedPrice": 0 # Placeholder
-        },
-        "latexFlowIntensity": flow_intensity,
-        "productivityRecommendation": {
-            "status": prod_status,
-            "suggestions": suggestions
-        }
+        "processed_image_path": None,
+        "productivityRecommendation": {"status": "unknown", "suggestions": []}
     }
 
 def main():
@@ -510,22 +576,658 @@ def main():
         return
 
     mode = sys.argv[1]
-    url = sys.argv[2]
-    user_hint = sys.argv[3] if len(sys.argv) > 3 else None
+
+    if mode == 'ai_suggestions':
+        # Mode: Generate AI suggestions only (skipping image processing)
+        # argv[2] should be a JSON string with detection data
+        try:
+            data_json = sys.argv[2]
+            data = json.loads(data_json)
+            
+            disease_name = data.get('disease_name', 'Unknown')
+            confidence = data.get('confidence', 0)
+            spot_count = data.get('spot_count', 0)
+            color_name = data.get('color_name', 'Green')
+            
+            sys.stderr.write(f"🧠 [Python AI] Generating suggestions for {disease_name}...\n")
+            
+            ai_insights = get_groq_analysis(disease_name, confidence, spot_count, color_name)
+            
+            # If Groq fails or returns null, provide basic fallback
+            if not ai_insights:
+                ai_insights = {
+                    "diagnosis": f"Detected {disease_name}. Detailed AI diagnosis unavailable.",
+                    "treatment": "Standard fungicide application recommended.",
+                    "prevention": "Monitor regularly.",
+                    "severity_reasoning": "Based on visual detection.",
+                    "tappability_advice": "Proceed with caution."
+                }
+                
+            print(json.dumps(ai_insights))
+            return
+
+        except Exception as e:
+             sys.stderr.write(f"❌ [Python AI] Error parsing input or generating suggestions: {e}\n")
+             print(json.dumps({"error": str(e)}))
+             return
+
+    image_url = sys.argv[2]
+    # Robust argument parsing for sub_mode
+    raw_sub_mode = sys.argv[3] if len(sys.argv) > 3 else ''
+    sub_mode = raw_sub_mode.strip().lower()
     
-    img = download_image(url)
+    sys.stderr.write(f"ℹ️ [Python ML] Mode: {mode}, SubMode: '{sub_mode}' (Raw: '{raw_sub_mode}')\n")
+
+    img = download_image(image_url)
     if img is None:
         print(json.dumps({"error": "Failed to load image"}))
         return
-        
+
     if mode == 'tree':
-        result = analyze_tree(img, user_hint)
-    elif mode == 'latex':
-        result = analyze_latex(img)
-    else:
-        result = {"error": "Invalid mode"}
+        # 1. Determine Scan Subtype (Leaf vs Trunk)
+        # Priority: User Input (sub_mode) > AI Classification > Default
         
-    print(json.dumps(result))
+        is_user_specified_trunk = sub_mode == 'trunk'
+        is_user_specified_leaf = sub_mode == 'leaf'
+        
+        # Only run generic classification if user didn't specify, OR to validate
+        classification = classify_content(img)
+        
+        # Override classification if user explicitly selected a mode
+        if is_user_specified_trunk:
+            sys.stderr.write("✅ [Python ML] User specified 'Trunk' scan. Enforcing Trunk Model.\n")
+            classification['primary_part'] = 'trunk'
+            classification['is_tree'] = True
+        elif is_user_specified_leaf:
+            sys.stderr.write("✅ [Python ML] User specified 'Leaf' scan. Enforcing Leaf Model.\n")
+            classification['primary_part'] = 'leaf'
+            classification['is_tree'] = True
+        
+        base_confidence = classification['confidence'] * 100
+        
+        tree_id_result = {
+            "isRubberTree": classification['is_tree'],
+            "confidence": base_confidence,
+            "detectedPart": classification['primary_part'],
+            "maturity": "mature" # default
+        }
+        
+        # 2. Perform detailed analysis based on part
+        analysis_result = {}
+        
+        # Logic: If it's a leaf scan (user specified OR detected)
+        if classification['primary_part'] == 'leaf':
+            # Use the Specialized Leaf Model
+            analysis_result = analyze_leaf_with_model(img, image_url)
+            
+            # Merge with tree ID
+            analysis_result["treeIdentification"] = tree_id_result
+            
+            # Fill other required fields with defaults
+            analysis_result["trunkAnalysis"] = None
+            
+            is_healthy = analysis_result["leafAnalysis"]["healthStatus"] == "healthy"
+            analysis_result["tappabilityAssessment"] = {
+                "isTappable": is_healthy,
+                "score": 75 if is_healthy else 40,
+                "reason": "Tree is healthy, proceed to check trunk." if is_healthy else "Treat disease before tapping."
+            }
+            
+            # Ensure productivityRecommendation is present in the final output
+            if "productivityRecommendation" not in analysis_result:
+                 analysis_result["productivityRecommendation"] = generate_productivity_recommendation(
+                     analysis_result["leafAnalysis"]["healthStatus"],
+                     analysis_result["diseaseDetection"][0]["name"],
+                     is_healthy,
+                     analysis_result["diseaseDetection"][0]["severity"]
+                 )
+            
+        else:
+            # TRUNK ANALYSIS (Default fallback if not leaf)
+            # Use the Specialized Trunk Model (Trunks.pt)
+            analysis_result = analyze_trunk_with_model(img, image_url, base_confidence)
+            
+            # Merge with existing tree ID (though trunk model also predicts it)
+            # We trust the initial tree ID for "isRubberTree" but use trunk model for specifics
+            analysis_result["treeIdentification"]["detectedPart"] = "trunk"
+
+        print(json.dumps(analysis_result))
+
+    elif mode == 'latex':
+        # Latex analysis
+        try:
+            # We can optionally save a processed image if we add visualization later
+            processed_path = None
+            result = analyze_latex_with_model(img, processed_path)
+            print(json.dumps(result))
+        except Exception as e:
+            sys.stderr.write(f"Latex analysis failed: {e}\n")
+            # Fallback
+            result = analyze_latex_heuristic(img)
+            print(json.dumps(result))
+
+def analyze_latex_with_model(img, image_path_for_saving=None):
+    """
+    Uses the trained Latex Quality Model (Latex.pt) for analysis.
+    Integrates Groq API for detailed insights.
+    """
+    model = get_latex_model()
+    
+    # Default values
+    latex_type = "Unknown"
+    confidence = 0.0
+    contamination_level = "low"
+    grade = 'A'
+    drc = 40.0 # Default DRC
+    description = "Standard latex."
+    
+    # Heuristic Fallback logic components
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    avg_color_per_row = np.average(img, axis=0)
+    avg_color = np.average(avg_color_per_row, axis=0)
+    
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
+    contamination_pixels = cv2.countNonZero(thresh)
+    contamination_ratio = contamination_pixels / (img.shape[0] * img.shape[1])
+    
+    if model:
+        try:
+            results = model(img, verbose=False)
+            
+            # Check if Classification or Detection model
+            if hasattr(results[0], 'probs') and results[0].probs is not None:
+                # Classification Model
+                probs = results[0].probs
+                top1_index = probs.top1
+                latex_type = results[0].names[top1_index]
+                confidence = float(probs.top1conf.item()) * 100
+            elif hasattr(results[0], 'boxes') and results[0].boxes is not None:
+                # Detection Model - find the class with highest confidence or most occurrences
+                boxes = results[0].boxes
+                if len(boxes) > 0:
+                    # Get the box with highest confidence
+                    best_box_idx = boxes.conf.argmax()
+                    cls_id = int(boxes.cls[best_box_idx].item())
+                    latex_type = results[0].names[cls_id]
+                    confidence = float(boxes.conf[best_box_idx].item()) * 100
+                else:
+                    latex_type = "Unknown"
+                    confidence = 0.0
+            
+            sys.stderr.write(f"✅ [Python ML] Latex Model Prediction: {latex_type} ({confidence:.1f}%)\n")
+            
+            # --- Combine AI Prediction with Heuristics ---
+            
+            # Use detection box if available to mask the latex area for accurate color
+            latex_mask = None
+            if hasattr(results[0], 'boxes') and results[0].boxes is not None and len(results[0].boxes) > 0:
+                best_box_idx = results[0].boxes.conf.argmax()
+                box = results[0].boxes.xyxy[best_box_idx].cpu().numpy().astype(int)
+                x1, y1, x2, y2 = box
+                
+                # Create mask for color analysis
+                latex_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+                latex_mask[y1:y2, x1:x2] = 255
+            else:
+                # Fallback: Use HSV segmentation to find latex-colored regions (White/Yellowish)
+                # This ignores dark bark/background
+                hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+                
+                # Define range for white/cream/yellowish latex
+                # Hue: 0-180 (OpenCV), allow yellowish (20-40) and neutral/white
+                # Saturation: Low for white (0-60), higher for yellow (up to 150)
+                # Value: High brightness (>100)
+                
+                # White/Light Grey Mask
+                lower_white = np.array([0, 0, 100])
+                upper_white = np.array([180, 60, 255])
+                mask_white = cv2.inRange(hsv_img, lower_white, upper_white)
+                
+                # Yellowish Mask (for oxidized latex)
+                lower_yellow = np.array([15, 60, 100])
+                upper_yellow = np.array([40, 200, 255])
+                mask_yellow = cv2.inRange(hsv_img, lower_yellow, upper_yellow)
+                
+                # Combine masks
+                latex_mask = cv2.bitwise_or(mask_white, mask_yellow)
+                
+                # Clean up mask (morphology)
+                kernel = np.ones((5,5), np.uint8)
+                latex_mask = cv2.morphologyEx(latex_mask, cv2.MORPH_OPEN, kernel)
+                latex_mask = cv2.morphologyEx(latex_mask, cv2.MORPH_CLOSE, kernel)
+                
+                # If mask is empty (e.g., lighting issues), fallback to center crop
+                if cv2.countNonZero(latex_mask) < (img.shape[0] * img.shape[1] * 0.05): # Less than 5% latex found
+                    sys.stderr.write("⚠️ [Python ML] Latex segmentation failed, falling back to center crop.\n")
+                    h, w = img.shape[:2]
+                    center_h, center_w = h // 2, w // 2
+                    crop_h, crop_w = h // 3, w // 3
+                    latex_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+                    latex_mask[center_h-crop_h//2:center_h+crop_h//2, center_w-crop_w//2:center_w+crop_w//2] = 255
+
+            # Calculate average color ONLY within the mask
+            avg_color = cv2.mean(img, mask=latex_mask)[:3]
+            
+            # Re-calculate contamination ratio within the MASKED area only
+            # Invert mask to find dark spots inside the latex area
+            # We want pixels that are INSIDE latex_mask but are DARK (contamination)
+            gray_masked = cv2.bitwise_and(gray, gray, mask=latex_mask)
+            _, contamination_thresh = cv2.threshold(gray_masked, 90, 255, cv2.THRESH_BINARY)
+            # Dark pixels will be 0, bright will be 255. 
+            # But outside mask is 0 too. So we need to distinguish background (0) from contamination (0).
+            # Easier: Find pixels where (latex_mask > 0) AND (gray < 90)
+            
+            latex_pixels_count = cv2.countNonZero(latex_mask)
+            if latex_pixels_count > 0:
+                # Contamination = pixels inside mask that are dark
+                contamination_mask = cv2.inRange(gray_masked, 1, 90) # 1 to exclude background 0
+                contamination_pixels = cv2.countNonZero(contamination_mask)
+                contamination_ratio = contamination_pixels / latex_pixels_count
+            else:
+                contamination_ratio = 0.0
+
+            # Adjust Grade/DRC based on Model Class
+            primary_color_class = "Unknown"
+            
+            # Normalize type string for robust matching against Latex.pt classes
+            # Expected classes: "latex with water", "yellow latex", "white latex"
+            lt_lower = latex_type.lower()
+            
+            # Default values
+            grade = 'B'
+            drc = 35.0
+            contamination_level = "low"
+            description = f"Detected: {latex_type}"
+            
+            if "white" in lt_lower:
+                # "white latex" -> High Quality
+                grade = 'A'
+                drc = 40.0
+                description = "High quality fresh white latex."
+                primary_color_class = "White Latex"
+                contamination_level = "low"
+                
+            elif "yellow" in lt_lower:
+                # "yellow latex" -> Oxidized / Pre-coagulated
+                grade = 'C'
+                drc = 32.0
+                description = "Yellowish/Oxidized latex detected."
+                primary_color_class = "Yellow/Oxidized"
+                contamination_level = "medium" # Oxidation is a form of contamination/degradation
+                
+            elif "water" in lt_lower:
+                # "latex with water" -> Diluted / Rain Contamination
+                grade = 'D'
+                drc = 15.0
+                description = "Diluted or contaminated with water."
+                primary_color_class = "Water/Diluted"
+                contamination_level = "high"
+                
+            elif "lump" in lt_lower or "cup" in lt_lower:
+                 grade = 'B'
+                 drc = 55.0 
+                 description = "Cup lump detected."
+                 primary_color_class = "Cup Lump"
+            else:
+                # Fallback for unknown classes
+                grade = 'B'
+                drc = 35.0
+                description = f"Detected: {latex_type}"
+                primary_color_class = latex_type.title()
+
+            # Refine contamination level based on visual analysis (pixels)
+            # Only downgrade if visual analysis CONFIRMS physical debris, or if Model says "water"
+            if "water" in lt_lower:
+                 contamination_level = "high"
+            elif contamination_ratio > 0.05:
+                # Physical debris detected
+                if grade < 'D': grade = chr(ord(grade) + 1) 
+                drc -= 2 
+                if contamination_level != "high": contamination_level = "medium"
+                description += " Debris detected."
+            
+            drc = max(5.0, drc) # Min floor
+
+            # --- AI Insights (Groq) ---
+            sys.stderr.write(f"🧠 [Python ML] Requesting detailed latex analysis from Groq...\n")
+            ai_insights = get_groq_latex_analysis(latex_type, confidence, contamination_level, drc)
+            
+            quality_assessment = description
+            processing_advice = "Filter and centrifuge."
+            
+            if ai_insights:
+                quality_assessment = ai_insights.get("quality_assessment", description)
+                processing_advice = ai_insights.get("processing_advice", "Filter and centrifuge.")
+                if isinstance(processing_advice, list): processing_advice = "; ".join(processing_advice)
+                elif isinstance(processing_advice, dict): processing_advice = str(processing_advice)
+            
+            # --- Construct Result ---
+            # Re-convert BGR to RGB for output
+            r_val = int(avg_color[2])
+            g_val = int(avg_color[1])
+            b_val = int(avg_color[0])
+            
+            return {
+                "colorAnalysis": {
+                    "primaryColor": primary_color_class, 
+                    "rgb": { "r": r_val, "g": g_val, "b": b_val },
+                    "hex": "#{:02x}{:02x}{:02x}".format(r_val, g_val, b_val)
+                },
+                "qualityClassification": {
+                    "grade": grade,
+                    "description": quality_assessment, # Use AI detailed assessment
+                    "confidence": confidence
+                },
+                "productYieldEstimation": {
+                    "dryRubberContent": drc,
+                    "productType": ai_insights.get("market_value_insight", "USS") if ai_insights else "USS"
+                },
+                "quantityEstimation": {
+                    "volume": 0 # Needs user input or depth estimation
+                },
+                "contaminationDetection": {
+                    "hasContamination": contamination_ratio > 0.01,
+                    "contaminationLevel": contamination_level,
+                    "contaminantTypes": ["Water"] if contamination_level == "high" else (["Debris"] if contamination_ratio > 0.02 else []),
+                    "details": ai_insights.get("contamination_handling", "Filter required") if ai_insights else "Filter required"
+                },
+                "productRecommendation": {
+                    "recommendedProduct": "RSS (Ribbed Smoked Sheet)" if grade in ['A','B'] else "Cup Lump",
+                    "reason": processing_advice,
+                    "preservation": ai_insights.get("preservation_tips", "Use Ammonia") if ai_insights else "Use Ammonia"
+                },
+                "marketAnalysis": ai_insights.get("market_analysis") if ai_insights else None,
+                "aiInsights": { # New standardized field
+                    "promptRecommendations": [
+                        f"How to improve {latex_type} quality?",
+                        "Best preservation methods for latex",
+                        "Current rubber market prices"
+                    ],
+                    "suggestions": [processing_advice, ai_insights.get("preservation_tips", "Check for pre-coagulation")] if ai_insights else [processing_advice]
+                }
+            }
+        except Exception as e:
+            sys.stderr.write(f"❌ [Python ML] Model inference error: {e}\n")
+            # Fallback to heuristic
+            return analyze_latex_heuristic(img)
+    
+    # Fallback if no model
+    return analyze_latex_heuristic(img)
+
+
+
+def analyze_trunk_with_model(img, image_path_for_saving=None, base_confidence=0.0):
+    """
+    Uses the trained Trunks.pt model for disease detection and analysis.
+    """
+    model = get_trunk_model()
+    
+    # Default values
+    disease_name = "Healthy"
+    confidence = base_confidence # Use base classification confidence as default
+    severity = "none"
+    recommendation = "Maintain regular monitoring."
+    processed_image_path = None
+    
+    if model:
+        try:
+            results = model(img, verbose=False)
+            
+            # Check for detections (OBB or Standard Box)
+            if hasattr(results[0], 'obb') and results[0].obb is not None and len(results[0].obb) > 0:
+                # OBB Detection
+                best_idx = results[0].obb.conf.argmax()
+                cls_id = int(results[0].obb.cls[best_idx].item())
+                disease_name = results[0].names[cls_id]
+                confidence = float(results[0].obb.conf[best_idx].item()) * 100
+            elif hasattr(results[0], 'boxes') and results[0].boxes is not None and len(results[0].boxes) > 0:
+                # Standard Box Detection
+                best_idx = results[0].boxes.conf.argmax()
+                cls_id = int(results[0].boxes.cls[best_idx].item())
+                disease_name = results[0].names[cls_id]
+                confidence = float(results[0].boxes.conf[best_idx].item()) * 100
+            elif hasattr(results[0], 'probs') and results[0].probs is not None:
+                # Classification Fallback
+                probs = results[0].probs
+                top1_index = probs.top1
+                disease_name = results[0].names[top1_index]
+                confidence = float(probs.top1conf.item()) * 100
+            
+            # Ensure confidence is not zero if we default to healthy but have a base confidence
+            if confidence == 0.0 and base_confidence > 0:
+                 confidence = base_confidence
+
+            # Map Disease Name to Health Status & Severity
+            disease_name, severity, recommendation = map_trunk_disease(disease_name)
+            
+            sys.stderr.write(f"✅ [Python ML] Trunk Model Prediction: {disease_name} ({confidence:.1f}%)\n")
+            
+            # Get Groq Analysis
+            sys.stderr.write(f"🧠 [Python ML] Requesting detailed trunk analysis from Groq...\n")
+            
+            # --- Physical Properties (Real Analysis) ---
+            # Pass bounding box if available for better girth estimation
+            bbox = None
+            if hasattr(results[0], 'obb') and results[0].obb is not None and len(results[0].obb) > 0:
+                 best_idx = results[0].obb.conf.argmax()
+                 bbox = results[0].obb.xyxyxyxy[best_idx].cpu().numpy().astype(int) # 4 points
+            elif hasattr(results[0], 'boxes') and results[0].boxes is not None and len(results[0].boxes) > 0:
+                 best_idx = results[0].boxes.conf.argmax()
+                 bbox = results[0].boxes.xyxy[best_idx].cpu().numpy().astype(int) # [x1, y1, x2, y2]
+            
+            trunk_phys = analyze_trunk_physical(img, bbox)
+            
+            # We can reuse the leaf analysis prompt structure or create a new one. 
+            # For simplicity, we reuse get_groq_analysis but contextually it works for diseases.
+            ai_insights = get_groq_analysis(disease_name, confidence, 0, trunk_phys["color"]) # Use real color
+            
+            if ai_insights:
+                 recommendation = ai_insights.get("treatment", recommendation)
+                 if isinstance(recommendation, list): recommendation = "; ".join(recommendation)
+                 elif isinstance(recommendation, dict): recommendation = str(recommendation)
+            
+            return {
+                "treeIdentification": {
+                    "isRubberTree": True,
+                    "confidence": confidence,
+                    "detectedPart": "trunk",
+                    "maturity": "mature"
+                },
+                "trunkAnalysis": {
+                    "girth": trunk_phys["girth"],
+                    "diameter": trunk_phys["diameter"],
+                    "texture": trunk_phys["texture"],
+                    "color": trunk_phys["color"],
+                    "healthStatus": "healthy" if severity == "none" else "diseased",
+                    "damages": [disease_name] if severity != "none" else []
+                },
+                "leafAnalysis": None,
+                "diseaseDetection": [{
+                     "name": disease_name, 
+                     "confidence": confidence, 
+                     "severity": severity, 
+                     "recommendation": recommendation,
+                     "ai_diagnosis": ai_insights.get("diagnosis", "No detailed diagnosis available.") if ai_insights else None
+                }],
+                "tappabilityAssessment": {
+                    "isTappable": severity == "none" and trunk_phys['girth'] > 45,
+                    "score": 85 if severity == "none" else 30,
+                    "reason": "Tree is healthy." if severity == "none" else f"Untappable due to {disease_name}."
+                },
+                "productivityRecommendation": { # Add this
+                    "status": "optimal" if severity == "none" else "critical",
+                    "suggestions": [recommendation]
+                }
+            }
+
+        except Exception as e:
+            sys.stderr.write(f"❌ [Python ML] Trunk model inference failed: {e}\n")
+            return analyze_trunk_heuristic_wrapper(img)
+            
+    return analyze_trunk_heuristic_wrapper(img)
+
+def analyze_trunk_heuristic_wrapper(img):
+    # Wrapper to format heuristic output to match full analysis structure
+    trunk_data = analyze_trunk_physical(img) # Use new physical analysis
+    return {
+        "treeIdentification": {"isRubberTree": True, "confidence": 100, "detectedPart": "trunk", "maturity": "mature"},
+        "trunkAnalysis": trunk_data,
+        "leafAnalysis": None,
+        "diseaseDetection": [{
+             "name": "No disease detected (Heuristic)", 
+             "confidence": 0, 
+             "severity": "none", 
+             "recommendation": "Trunk analysis limited to physical properties."
+        }],
+        "tappabilityAssessment": {
+            "isTappable": trunk_data['girth'] > 45,
+            "score": 85 if trunk_data['girth'] > 45 else 40,
+            "reason": "Suitable girth." if trunk_data['girth'] > 45 else "Girth too small."
+        },
+        "productivityRecommendation": {"status": "optimal", "suggestions": ["Monitor growth."]}
+    }
+
+def analyze_trunk_physical(img, bbox=None):
+    """
+    Analyzes physical properties of the trunk from the image.
+    Uses bounding box if available, otherwise heuristic center crop.
+    """
+    height, width = img.shape[:2]
+    
+    # 1. Girth/Diameter Estimation (Pixel-based)
+    # If we have a bbox, use its width. Otherwise, estimate from center.
+    pixel_width = 0
+    if bbox is not None:
+        if len(bbox.shape) == 2 and bbox.shape[0] == 4: # OBB 4 points
+             # Calculate width as min side of rotated rect? Or just bounds.
+             # Simple approach: max x - min x
+             xs = bbox[:, 0]
+             pixel_width = np.max(xs) - np.min(xs)
+        elif len(bbox.shape) == 1 and bbox.shape[0] == 4: # Box [x1, y1, x2, y2]
+             pixel_width = bbox[2] - bbox[0]
+    
+    if pixel_width == 0:
+        # Heuristic: Find strong vertical edges in the middle third
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        center_row = gray[height//2, :]
+        edges = cv2.Canny(gray, 50, 150)
+        row_edges = edges[height//2, :]
+        edge_indices = np.where(row_edges > 0)[0]
+        
+        if len(edge_indices) >= 2:
+            pixel_width = edge_indices[-1] - edge_indices[0]
+        else:
+            pixel_width = width * 0.4 # Fallback to 40% of image width
+            
+    # Convert pixel width to estimated cm
+    # Assumption: Standard photo distance (~1m), standard camera FOV covers ~1m width
+    # This is a ROUGH ESTIMATE.
+    cm_per_pixel = 100.0 / width # Assuming 1m width field of view
+    estimated_diameter_cm = float(pixel_width * cm_per_pixel)
+    estimated_girth_cm = float(estimated_diameter_cm * 3.14159)
+    
+    # Clamp to realistic values (10cm - 150cm)
+    estimated_girth_cm = max(10.0, min(150.0, estimated_girth_cm))
+    estimated_diameter_cm = estimated_girth_cm / 3.14159
+
+    # 2. Texture Analysis
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Calculate GLCM-like features (Contrast/Entropy via simple variance)
+    # High variance in local patches = Rough
+    # Low variance = Smooth
+    
+    # Crop to center for texture analysis to avoid background
+    crop_size = min(height, width) // 4
+    center_y, center_x = height // 2, width // 2
+    texture_roi = gray[center_y-crop_size:center_y+crop_size, center_x-crop_size:center_x+crop_size]
+    
+    if texture_roi.size == 0: texture_roi = gray # Fallback
+    
+    # Variance of Laplacian (measure of texture detail)
+    laplacian_var = cv2.Laplacian(texture_roi, cv2.CV_64F).var()
+    
+    texture = "rough" if laplacian_var > 500 else "smooth"
+    if laplacian_var > 1500: texture = "very rough/damaged"
+    
+    # 3. Color Analysis
+    # Reuse dominant color logic but formatted for trunk
+    # Crop to center again
+    color_roi = img[center_y-crop_size:center_y+crop_size, center_x-crop_size:center_x+crop_size]
+    if color_roi.size == 0: color_roi = img
+    
+    dominant_color = get_dominant_color_name(color_roi)
+    
+    # Refine color name for trunk context
+    if "Green" in dominant_color: dominant_color = "Mossy/Greenish"
+    if "Yellow" in dominant_color: dominant_color = "Pale/Yellowish"
+    
+    return {
+        "girth": round(float(estimated_girth_cm), 1),
+        "diameter": round(float(estimated_diameter_cm), 1),
+        "texture": texture,
+        "color": dominant_color,
+        "healthStatus": "unknown", # Determined by model, not physical
+        "damages": [],
+        "is_immature": bool(estimated_girth_cm < 40)
+    }
+
+def analyze_trunk_heuristic(img):
+    # Legacy wrapper
+    return analyze_trunk_physical(img)
+
+def analyze_latex_heuristic(img):
+    # ... (Keep existing latex logic or simplify)
+    # Using the logic from previous main.py for latex
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    avg_color_per_row = np.average(img, axis=0)
+    avg_color = np.average(avg_color_per_row, axis=0)
+    mean_saturation = np.mean(hsv[:, :, 1])
+    mean_value = np.mean(hsv[:, :, 2])
+    
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
+    contamination_pixels = cv2.countNonZero(thresh)
+    contamination_ratio = contamination_pixels / (img.shape[0] * img.shape[1])
+    
+    grade = 'A'
+    drc = 40.0
+    description = "Excellent quality."
+    
+    if contamination_ratio > 0.05:
+        grade = 'D'; drc -= 10; description = "High contamination."
+    elif mean_saturation > 50:
+        grade = 'C'; drc -= 5; description = "Discolored."
+    elif mean_value < 150:
+        grade = 'B'; drc -= 2; description = "Dark impurities."
+        
+    return {
+        "latexColorAnalysis": {
+            "primaryColor": "white",
+            "hex": "#{:02x}{:02x}{:02x}".format(int(avg_color[2]), int(avg_color[1]), int(avg_color[0]))
+        },
+        "latexQualityPrediction": {
+            "quality": "excellent" if grade == 'A' else "good",
+            "dryRubberContent": drc,
+            "estimatedPrice": 0
+        },
+        "qualityClassification": {
+            "grade": grade,
+            "description": description
+        },
+        "productYieldEstimation": {
+             "dryRubberContent": drc
+        },
+        "quantityEstimation": {
+            "volume": 2.5,
+            "weight": 2.5
+        },
+        "contaminationDetection": {
+             "hasContamination": contamination_ratio > 0.01
+        }
+    }
 
 if __name__ == "__main__":
+    # print("DEBUG: MAIN CALLED")
     main()

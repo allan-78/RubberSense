@@ -64,7 +64,8 @@ const latexBatchSchema = new mongoose.Schema({
   productYieldEstimation: {
     dryRubberContent: Number, // Percentage
     estimatedYield: Number, // Kg of dry rubber
-    productType: String // TSR20, RSS, etc.
+    productType: String, // TSR20, RSS, etc.
+    confidence: Number // Add confidence score
   },
   productRecommendation: {
     recommendedProduct: String,
@@ -86,6 +87,12 @@ const latexBatchSchema = new mongoose.Schema({
     type: String,
     enum: ['pending', 'processing', 'completed', 'failed'],
     default: 'pending'
+  },
+  aiInsights: {
+    promptRecommendations: [String],
+    suggestions: [String],
+    analysisTimestamp: Date,
+    version: Number
   },
   notes: {
     type: String,

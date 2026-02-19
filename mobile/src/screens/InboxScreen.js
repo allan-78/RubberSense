@@ -79,6 +79,18 @@ const InboxScreen = ({ navigation }) => {
     // Check if message is read (assuming read/seen property exists)
     const isRead = lastMessage?.read || false; 
 
+    const getPreviewText = () => {
+      if (lastMessage?.text) return hashBadWords(lastMessage.text);
+      if (lastMessage?.attachments?.length > 0) {
+        const count = lastMessage.attachments.length;
+        const firstType = lastMessage.attachments[0].type || '';
+        if (firstType.startsWith('image/')) return '📷 Sent an image';
+        if (firstType.startsWith('video/')) return '🎥 Sent a video';
+        return '📎 Sent an attachment';
+      }
+      return 'No content';
+    };
+
     return (
       <TouchableOpacity 
         style={styles.conversationItem}
@@ -107,7 +119,7 @@ const InboxScreen = ({ navigation }) => {
                styles.messagePreview, 
                !isRead && !isMe ? styles.unreadMessage : null
              ]} numberOfLines={1}>
-              {isMe ? 'You: ' : ''}{hashBadWords(lastMessage?.text || '')}
+              {isMe ? 'You: ' : ''}{getPreviewText()}
             </Text>
             {/* Unread indicator for received messages */}
             {!isRead && !isMe && (

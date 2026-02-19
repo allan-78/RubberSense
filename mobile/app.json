@@ -21,12 +21,15 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#10B981"
       },
+      "usesCleartextTraffic": true,
       "package": "com.rubbersense.app",
       "permissions": [
-        "INTERNET", 
-        "ACCESS_NETWORK_STATE",
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -55,6 +58,11 @@
           "locationAlwaysAndWhenInUsePermission": "Allow RubberSense to use your location to map rubber farms and show local weather."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3aaa1b9b-bce4-4e57-87f9-da6ebae35f74"
+      }
+    }
   }
 }

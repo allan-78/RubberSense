@@ -38,6 +38,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  bio: {
+    type: String,
+    trim: true
+  },
   verificationToken: {
     type: String,
     select: false
