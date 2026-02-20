@@ -7,7 +7,8 @@
     "start:offline": "expo start --offline",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:prod-apk": "eas build --profile production-apk --platform android --no-wait"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -40,6 +41,7 @@
   },
   "private": true,
   "devDependencies": {
-    "babel-preset-expo": "^54.0.10"
+    "babel-preset-expo": "^54.0.10",
+    "eas-cli": "^18.0.1"
   }
 }

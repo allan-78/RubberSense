@@ -19,7 +19,7 @@
     "production": {
       "distribution": "store",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://your-production-backend.com"
+        "EXPO_PUBLIC_API_URL": "https://rubbersense.onrender.com"
       }
     },
     "production-apk": {
@@ -28,7 +28,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://your-production-backend.com"
+        "EXPO_PUBLIC_API_URL": "https://rubbersense.onrender.com"
       }
     }
   },

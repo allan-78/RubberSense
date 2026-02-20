@@ -7,7 +7,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RandomForestRegressor } from './RandomForest';
 
-export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.143.82.142:5000';
+export const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://10.143.82.142:5000').replace(/\/$/, '');
 
 console.log('🔌 [API Service] Initialized');
 console.log('🔗 [API Service] Using API URL:', API_URL);
