@@ -7,11 +7,14 @@ import {
   TouchableOpacity, 
   Image,
   ActivityIndicator,
-  RefreshControl
+  RefreshControl,
+  Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { useAppRefresh } from '../context/AppRefreshContext';
 import { messageAPI } from '../services/api';
+import { connectSocket } from '../services/socket';
 import theme from '../styles/theme';
 
 const BAD_WORDS = [
@@ -38,9 +41,18 @@ const hashBadWords = (text = '') => {
   return result;
 };
 
+const extractList = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.data)) return payload.data.data;
+  return [];
+};
+
 const InboxScreen = ({ navigation }) => {
   const { user } = useAuth();
+  const { refreshTick } = useAppRefresh();
   const [conversations, setConversations] = useState([]);
+  const [messageRequests, setMessageRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -50,10 +62,12 @@ const InboxScreen = ({ navigation }) => {
 
   const fetchConversations = async () => {
     try {
-      const response = await messageAPI.getConversations();
-      // Handle both { data: [] } and [] response formats
-      const conversationsData = response.data || response;
-      setConversations(Array.isArray(conversationsData) ? conversationsData : []);
+      const [conversationsResponse, requestsResponse] = await Promise.all([
+        messageAPI.getConversations(),
+        messageAPI.getRequests().catch(() => ({ data: [] }))
+      ]);
+      setConversations(extractList(conversationsResponse));
+      setMessageRequests(extractList(requestsResponse));
     } catch (error) {
       console.log('Error fetching conversations:', error);
     } finally {
@@ -65,6 +79,63 @@ const InboxScreen = ({ navigation }) => {
   const handleRefresh = () => {
     setRefreshing(true);
     fetchConversations();
+  };
+
+  useEffect(() => {
+    if (refreshTick === 0) return;
+    fetchConversations();
+  }, [refreshTick]);
+
+  useEffect(() => {
+    const myUserId = user?._id || user?.id;
+    if (!myUserId) return;
+
+    let cleanup = () => {};
+    let isMounted = true;
+
+    const attachSocketListeners = async () => {
+      const socket = await connectSocket(myUserId);
+      if (!isMounted || !socket) return;
+
+      const refreshInbox = () => {
+        fetchConversations();
+      };
+
+      socket.on('message:new', refreshInbox);
+      socket.on('message:request', refreshInbox);
+      socket.on('message:request-updated', refreshInbox);
+      socket.on('chat:block-updated', refreshInbox);
+
+      cleanup = () => {
+        socket.off('message:new', refreshInbox);
+        socket.off('message:request', refreshInbox);
+        socket.off('message:request-updated', refreshInbox);
+        socket.off('chat:block-updated', refreshInbox);
+      };
+    };
+
+    attachSocketListeners();
+
+    return () => {
+      isMounted = false;
+      cleanup();
+    };
+  }, [user?._id, user?.id]);
+
+  const handleRequestAction = async (senderId, action) => {
+    try {
+      await messageAPI.respondToRequest(senderId, action);
+      if (action === 'accept') {
+        const accepted = messageRequests.find(req => String(req?._id || req?.user?._id) === String(senderId));
+        if (accepted?.user) {
+          navigation.navigate('Chat', { otherUser: accepted.user });
+        }
+      }
+      fetchConversations();
+    } catch (error) {
+      console.log('Error responding to request:', error);
+      Alert.alert('Error', 'Failed to process message request');
+    }
   };
 
   const renderItem = ({ item }) => {
@@ -140,6 +211,44 @@ const InboxScreen = ({ navigation }) => {
     );
   };
 
+  const renderRequestItem = ({ item }) => {
+    const requestUser = item.user;
+    const preview = item.lastMessage?.text || (item.lastMessage?.attachments?.length ? 'Sent an attachment' : 'Message request');
+    return (
+      <View style={[styles.conversationItem, styles.requestItem]}>
+        <View style={styles.avatarContainer}>
+          {requestUser?.profileImage ? (
+            <Image source={{ uri: requestUser.profileImage }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarPlaceholder]}>
+              <Text style={styles.avatarText}>
+                {(requestUser?.name || 'U').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.contentContainer}>
+          <Text style={styles.name}>{requestUser?.name || 'Unknown'}</Text>
+          <Text style={styles.messagePreview} numberOfLines={1}>{hashBadWords(preview)}</Text>
+          <View style={styles.requestActions}>
+            <TouchableOpacity
+              style={[styles.requestButton, styles.acceptButton]}
+              onPress={() => handleRequestAction(requestUser?._id || item?._id, 'accept')}
+            >
+              <Text style={styles.requestButtonText}>Accept</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.requestButton, styles.rejectButton]}
+              onPress={() => handleRequestAction(requestUser?._id || item?._id, 'reject')}
+            >
+              <Text style={styles.requestButtonText}>Decline</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -158,6 +267,26 @@ const InboxScreen = ({ navigation }) => {
           data={conversations}
           keyExtractor={item => item.user._id}
           renderItem={renderItem}
+          ListHeaderComponent={
+            <View style={styles.requestsSection}>
+              <View style={styles.requestsMeta}>
+                <Text style={styles.requestsTitle}>Message Requests</Text>
+                <View style={styles.requestsCountBadge}>
+                  <Text style={styles.requestsCountText}>{messageRequests.length}</Text>
+                </View>
+              </View>
+              {messageRequests.length > 0 ? (
+                <FlatList
+                  data={messageRequests}
+                  keyExtractor={(item) => String(item?.user?._id || item?._id)}
+                  renderItem={renderRequestItem}
+                  scrollEnabled={false}
+                />
+              ) : (
+                <Text style={styles.requestsEmpty}>No pending message requests.</Text>
+              )}
+            </View>
+          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
           }
@@ -206,6 +335,39 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
   },
+  requestsSection: {
+    marginBottom: 16,
+  },
+  requestsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  requestsMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 8,
+  },
+  requestsCountBadge: {
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  requestsCountText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  requestsEmpty: {
+    fontSize: 13,
+    color: theme.colors.textLight,
+    paddingVertical: 4,
+  },
   conversationItem: {
     flexDirection: 'row',
     backgroundColor: theme.colors.surface,
@@ -215,6 +377,10 @@ const styles = StyleSheet.create({
     ...theme.shadows.sm,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
+  },
+  requestItem: {
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
   },
   avatarContainer: {
     marginRight: 16,
@@ -258,6 +424,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  requestActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  requestButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  acceptButton: {
+    backgroundColor: theme.colors.success,
+  },
+  rejectButton: {
+    backgroundColor: theme.colors.error,
+  },
+  requestButtonText: {
+    color: '#FFF',
+    fontWeight: '700',
+    fontSize: 12,
   },
   messagePreview: {
     fontSize: 14,

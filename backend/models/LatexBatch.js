@@ -70,7 +70,10 @@ const latexBatchSchema = new mongoose.Schema({
   productRecommendation: {
     recommendedProduct: String,
     reason: String,
-    expectedQuality: String
+    expectedQuality: String,
+    recommendedUses: [String],
+    marketValueInsight: String,
+    preservation: String
   },
   marketPriceEstimation: {
     pricePerKg: Number,

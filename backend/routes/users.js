@@ -4,6 +4,8 @@ const User = require('../models/User');
 const Post = require('../models/Post');
 const Tree = require('../models/Tree');
 const Scan = require('../models/Scan');
+const Message = require('../models/Message');
+const { emitToUser } = require('../socket');
 const { protect } = require('../middleware/auth');
 const fs = require('fs');
 const upload = require('../middleware/upload');
@@ -72,6 +74,8 @@ router.put('/profile', protect, upload.single('profileImage'), async (req, res) 
 // @access  Private
 router.get('/:id', protect, async (req, res) => {
   try {
+    const requester = await User.findById(req.user.id).select('blockedUsers');
+
     const user = await User.findById(req.params.id)
       .select('-password -verificationToken')
       .populate('followers', 'name profileImage')
@@ -90,17 +94,28 @@ router.get('/:id', protect, async (req, res) => {
     const isFollowing = user.followers.some(
       follower => follower._id.toString() === req.user.id
     );
+    const isBlockedByMe = Array.isArray(requester?.blockedUsers)
+      ? requester.blockedUsers.some(id => String(id) === String(user._id))
+      : false;
+    const hasBlockedMe = Array.isArray(user.blockedUsers)
+      ? user.blockedUsers.some(id => String(id?._id || id) === String(req.user.id))
+      : false;
+
+    const userObj = user.toObject();
+    delete userObj.blockedUsers;
 
     res.json({
       success: true,
       data: {
-        ...user.toObject(),
+        ...userObj,
         stats: {
           posts: postCount,
           trees: treeCount,
           scans: scanCount
         },
-        isFollowing
+        isFollowing,
+        isBlockedByMe,
+        hasBlockedMe
       }
     });
   } catch (error) {
@@ -124,6 +139,18 @@ router.put('/:id/follow', protect, async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
+    const blockedByMe = Array.isArray(currentUser.blockedUsers)
+      && currentUser.blockedUsers.some(id => String(id) === String(req.params.id));
+    const blockedMe = Array.isArray(userToFollow.blockedUsers)
+      && userToFollow.blockedUsers.some(id => String(id) === String(req.user.id));
+
+    if (blockedByMe || blockedMe) {
+      return res.status(403).json({
+        success: false,
+        error: 'Follow action unavailable due to block settings'
+      });
+    }
+
     // Check if already following
     const isFollowing = userToFollow.followers.some(id => id.toString() === req.user.id);
 
@@ -144,6 +171,103 @@ router.put('/:id/follow', protect, async (req, res) => {
       success: true, 
       isFollowing: !isFollowing,
       followersCount: updatedUser.followers.length 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// @route   PUT /api/users/:id/block
+// @desc    Block a user
+// @access  Private
+router.put('/:id/block', protect, async (req, res) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ success: false, error: 'Cannot block yourself' });
+    }
+
+    const [targetUser, currentUser] = await Promise.all([
+      User.findById(req.params.id),
+      User.findById(req.user.id)
+    ]);
+
+    if (!targetUser || !currentUser) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    await Promise.all([
+      User.findByIdAndUpdate(req.user.id, { $addToSet: { blockedUsers: req.params.id }, $pull: { following: req.params.id, followers: req.params.id } }),
+      User.findByIdAndUpdate(req.params.id, { $pull: { following: req.user.id, followers: req.user.id } }),
+      Message.updateMany(
+        {
+          requestStatus: 'pending',
+          $or: [
+            { sender: req.user.id, receiver: req.params.id },
+            { sender: req.params.id, receiver: req.user.id }
+          ]
+        },
+        { $set: { requestStatus: 'rejected' } }
+      )
+    ]);
+
+    const updatedCurrentUser = await User.findById(req.user.id).select('blockedUsers');
+    const isBlocked = updatedCurrentUser.blockedUsers.some(id => String(id) === String(req.params.id));
+
+    const socketPayload = {
+      withUserId: req.params.id,
+      blockedByMe: isBlocked,
+      updatedBy: req.user.id,
+    };
+    emitToUser(req.user.id, 'chat:block-updated', socketPayload);
+    emitToUser(req.params.id, 'chat:block-updated', {
+      withUserId: req.user.id,
+      blockedMe: isBlocked,
+      updatedBy: req.user.id,
+    });
+
+    res.json({
+      success: true,
+      isBlocked,
+      blockedUsersCount: updatedCurrentUser.blockedUsers.length
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// @route   PUT /api/users/:id/unblock
+// @desc    Unblock a user
+// @access  Private
+router.put('/:id/unblock', protect, async (req, res) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ success: false, error: 'Cannot unblock yourself' });
+    }
+
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    await User.findByIdAndUpdate(req.user.id, { $pull: { blockedUsers: req.params.id } });
+    const updatedCurrentUser = await User.findById(req.user.id).select('blockedUsers');
+    const isBlocked = updatedCurrentUser.blockedUsers.some(id => String(id) === String(req.params.id));
+
+    emitToUser(req.user.id, 'chat:block-updated', {
+      withUserId: req.params.id,
+      blockedByMe: isBlocked,
+      updatedBy: req.user.id,
+    });
+    emitToUser(req.params.id, 'chat:block-updated', {
+      withUserId: req.user.id,
+      blockedMe: isBlocked,
+      updatedBy: req.user.id,
+    });
+
+    res.json({
+      success: true,
+      isBlocked,
+      blockedUsersCount: updatedCurrentUser.blockedUsers.length
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

@@ -26,11 +26,24 @@ const messageSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  requestStatus: {
+    type: String,
+    enum: ['accepted', 'pending', 'rejected'],
+    default: 'accepted'
+  },
   createdAt: {
     type: Date,
     default: Date.now
   }
 });
+
+// Frontend compatibility: existing UI expects `read`
+messageSchema.virtual('read').get(function() {
+  return this.isRead;
+});
+
+messageSchema.set('toJSON', { virtuals: true });
+messageSchema.set('toObject', { virtuals: true });
 
 // Index for faster queries
 messageSchema.index({ sender: 1, receiver: 1 });

@@ -19,7 +19,8 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useAuth } from '../context/AuthContext';
-import { messageAPI } from '../services/api';
+import { messageAPI, userAPI } from '../services/api';
+import { connectSocket } from '../services/socket';
 import theme from '../styles/theme';
 
 const BAD_WORDS = [
@@ -63,6 +64,15 @@ const ChatScreen = ({ route, navigation }) => {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [attachments, setAttachments] = useState([]);
+  const [chatStatus, setChatStatus] = useState({
+    status: 'none',
+    canMessage: true,
+    blockedByMe: false,
+    blockedMe: false,
+  });
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [respondingRequest, setRespondingRequest] = useState(false);
+  const [unblocking, setUnblocking] = useState(false);
   const flatListRef = useRef(null);
 
   useEffect(() => {
@@ -71,10 +81,68 @@ const ChatScreen = ({ route, navigation }) => {
         return;
     }
     fetchMessages();
+    fetchChatStatus();
     // In a real app, you'd use socket.io for real-time updates
-    const interval = setInterval(fetchMessages, 5000); // Poll every 5s
+    const interval = setInterval(() => {
+      fetchMessages();
+      fetchChatStatus(false);
+    }, 5000); // Poll every 5s
     return () => clearInterval(interval);
   }, [otherUser?._id]);
+
+  useEffect(() => {
+    const myUserId = user?._id || user?.id;
+    const targetUserId = otherUser?._id;
+    if (!myUserId || !targetUserId) return;
+
+    let cleanup = () => {};
+    let isMounted = true;
+
+    const attachSocketListeners = async () => {
+      const socket = await connectSocket(myUserId);
+      if (!isMounted || !socket) return;
+
+      const onMessage = (payload) => {
+        const senderId = String(payload?.sender?._id || payload?.sender?.id || payload?.sender || '');
+        const receiverId = String(payload?.receiver?._id || payload?.receiver?.id || payload?.receiver || '');
+        const otherId = String(targetUserId);
+        if (senderId === otherId || receiverId === otherId) {
+          fetchMessages();
+          fetchChatStatus(false);
+        }
+      };
+
+      const onRequest = () => {
+        fetchMessages();
+        fetchChatStatus(false);
+      };
+
+      const onBlockUpdated = (payload) => {
+        if (String(payload?.withUserId || '') === String(targetUserId)) {
+          fetchChatStatus(false);
+        }
+      };
+
+      socket.on('message:new', onMessage);
+      socket.on('message:request', onRequest);
+      socket.on('message:request-updated', onRequest);
+      socket.on('chat:block-updated', onBlockUpdated);
+
+      cleanup = () => {
+        socket.off('message:new', onMessage);
+        socket.off('message:request', onRequest);
+        socket.off('message:request-updated', onRequest);
+        socket.off('chat:block-updated', onBlockUpdated);
+      };
+    };
+
+    attachSocketListeners();
+
+    return () => {
+      isMounted = false;
+      cleanup();
+    };
+  }, [user?._id, user?.id, otherUser?._id]);
 
   if (!otherUser) return null;
 
@@ -88,6 +156,25 @@ const ChatScreen = ({ route, navigation }) => {
     } catch (error) {
       console.log('Error fetching messages:', error);
       setLoading(false);
+    }
+  };
+
+  const fetchChatStatus = async (showLoader = true) => {
+    if (!otherUser?._id) return;
+    if (showLoader) setStatusLoading(true);
+    try {
+      const response = await messageAPI.getStatus(otherUser._id);
+      const statusData = response?.data || response || {};
+      setChatStatus({
+        status: statusData.status || 'none',
+        canMessage: statusData.canMessage !== false,
+        blockedByMe: !!statusData.blockedByMe,
+        blockedMe: !!statusData.blockedMe,
+      });
+    } catch (error) {
+      console.log('Error fetching chat status:', error);
+    } finally {
+      if (showLoader) setStatusLoading(false);
     }
   };
 
@@ -254,6 +341,11 @@ const ChatScreen = ({ route, navigation }) => {
   };
 
   const handleSend = async () => {
+    if (!chatStatus.canMessage || ['pending_incoming', 'pending_outgoing'].includes(chatStatus.status)) {
+      Alert.alert('Unavailable', 'You cannot send a message right now.');
+      return;
+    }
+
     const hasText = inputText.trim().length > 0;
     const hasAttachments = attachments.length > 0;
     
@@ -290,12 +382,79 @@ const ChatScreen = ({ route, navigation }) => {
       }
       
       fetchMessages(); // Refresh to get real message from server
+      fetchChatStatus(false);
     } catch (error) {
       console.log('Error sending message:', error);
       Alert.alert('Error', 'Failed to send message');
     } finally {
       setSending(false);
     }
+  };
+
+  const handleRequestAction = async (action) => {
+    if (!otherUser?._id || respondingRequest) return;
+    try {
+      setRespondingRequest(true);
+      await messageAPI.respondToRequest(otherUser._id, action);
+      await fetchChatStatus(false);
+      await fetchMessages();
+      if (action === 'reject') {
+        Alert.alert('Request Rejected', 'Message request was rejected.');
+      }
+    } catch (error) {
+      console.log('Error responding to request:', error);
+      Alert.alert('Error', 'Failed to update message request');
+    } finally {
+      setRespondingRequest(false);
+    }
+  };
+
+  const handleBlockAction = async (mode = 'block') => {
+    if (!otherUser?._id || unblocking) return;
+    try {
+      setUnblocking(true);
+      if (mode === 'unblock') {
+        await userAPI.unblockUser(otherUser._id);
+      } else {
+        await userAPI.blockUser(otherUser._id);
+      }
+      await fetchChatStatus(false);
+      await fetchMessages();
+      Alert.alert(
+        mode === 'unblock' ? 'User Unblocked' : 'User Blocked',
+        mode === 'unblock'
+          ? 'You can now continue chatting.'
+          : 'You blocked this user.'
+      );
+    } catch (error) {
+      console.log('Error updating block status:', error);
+      Alert.alert('Error', `Failed to ${mode} user`);
+    } finally {
+      setUnblocking(false);
+    }
+  };
+
+  const handleUnblock = async () => {
+    await handleBlockAction('unblock');
+  };
+
+  const handleHeaderMenu = () => {
+    const blockedByMe = chatStatus.status === 'blocked_by_me' || chatStatus.blockedByMe;
+    const targetAction = blockedByMe ? 'unblock' : 'block';
+    const label = blockedByMe ? 'Unblock User' : 'Block User';
+
+    Alert.alert(
+      'Chat Settings',
+      `${otherUser?.name || 'User'}`,
+      [
+        {
+          text: label,
+          style: blockedByMe ? 'default' : 'destructive',
+          onPress: () => handleBlockAction(targetAction),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   const renderAttachmentsList = (files) => {
@@ -393,7 +552,58 @@ const ChatScreen = ({ route, navigation }) => {
             <Text style={styles.headerStatus}>Online</Text>
           </View>
         </View>
+
+        <TouchableOpacity style={styles.headerMenuButton} onPress={handleHeaderMenu}>
+          <Ionicons name="ellipsis-vertical" size={20} color={theme.colors.text} />
+        </TouchableOpacity>
       </View>
+
+      {statusLoading ? (
+        <View style={styles.statusBanner}>
+          <Text style={styles.statusBannerText}>Checking chat permissions...</Text>
+        </View>
+      ) : chatStatus.status === 'pending_incoming' ? (
+        <View style={styles.statusBanner}>
+          <Text style={styles.statusBannerText}>This user sent you a message request.</Text>
+          <View style={styles.statusActions}>
+            <TouchableOpacity
+              style={[styles.statusActionButton, styles.acceptButton]}
+              onPress={() => handleRequestAction('accept')}
+              disabled={respondingRequest}
+            >
+              <Text style={styles.statusActionText}>Accept</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.statusActionButton, styles.rejectButton]}
+              onPress={() => handleRequestAction('reject')}
+              disabled={respondingRequest}
+            >
+              <Text style={styles.statusActionText}>Reject</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : chatStatus.status === 'pending_outgoing' ? (
+        <View style={styles.statusBanner}>
+          <Text style={styles.statusBannerText}>Message request sent. Wait for acceptance.</Text>
+        </View>
+      ) : chatStatus.status === 'blocked_by_me' ? (
+        <View style={styles.statusBanner}>
+          <Text style={styles.statusBannerText}>You blocked this user.</Text>
+          <View style={styles.statusActions}>
+            <TouchableOpacity
+              style={[styles.statusActionButton, styles.unblockButton]}
+              onPress={handleUnblock}
+              disabled={unblocking}
+            >
+              <Text style={styles.statusActionText}>{unblocking ? 'Unblocking...' : 'Unblock'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : chatStatus.status === 'blocked_me' ? (
+        <View style={styles.statusBanner}>
+          <Text style={styles.statusBannerText}>You cannot message this user.</Text>
+        </View>
+      ) : null}
 
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -430,29 +640,44 @@ const ChatScreen = ({ route, navigation }) => {
           )}
           
           <View style={styles.inputRow}>
-            <TouchableOpacity onPress={addMediaAttachment} style={styles.attachButton}>
+            <TouchableOpacity
+              onPress={addMediaAttachment}
+              style={styles.attachButton}
+              disabled={!chatStatus.canMessage || ['pending_incoming', 'pending_outgoing'].includes(chatStatus.status)}
+            >
               <Ionicons name="image-outline" size={24} color={theme.colors.primary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={addFileAttachment} style={styles.attachButton}>
+            <TouchableOpacity
+              onPress={addFileAttachment}
+              style={styles.attachButton}
+              disabled={!chatStatus.canMessage || ['pending_incoming', 'pending_outgoing'].includes(chatStatus.status)}
+            >
               <Ionicons name="attach-outline" size={24} color={theme.colors.primary} />
             </TouchableOpacity>
 
             <TextInput
               style={styles.input}
-              placeholder="Type a message..."
+              placeholder={
+                chatStatus.status === 'pending_incoming'
+                  ? "Accept request to reply..."
+                  : chatStatus.status === 'pending_outgoing'
+                    ? "Waiting for approval..."
+                    : "Type a message..."
+              }
               value={inputText}
               onChangeText={setInputText}
               multiline
               placeholderTextColor={theme.colors.textLight}
+              editable={chatStatus.canMessage && !['pending_incoming', 'pending_outgoing'].includes(chatStatus.status)}
             />
             
             <TouchableOpacity 
               style={[
                 styles.sendButton, 
-                ((!inputText.trim() && attachments.length === 0) || sending) && styles.sendButtonDisabled
+                ((!inputText.trim() && attachments.length === 0) || sending || !chatStatus.canMessage || ['pending_incoming', 'pending_outgoing'].includes(chatStatus.status)) && styles.sendButtonDisabled
               ]}
               onPress={handleSend}
-              disabled={(!inputText.trim() && attachments.length === 0) || sending}
+              disabled={(!inputText.trim() && attachments.length === 0) || sending || !chatStatus.canMessage || ['pending_incoming', 'pending_outgoing'].includes(chatStatus.status)}
             >
               {sending ? (
                 <ActivityIndicator size="small" color="#FFF" />
@@ -489,6 +714,9 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  headerMenuButton: {
+    padding: 8,
   },
   headerAvatar: {
     width: 40,
@@ -570,6 +798,42 @@ const styles = StyleSheet.create({
   },
   statusIcon: {
     marginLeft: 2,
+  },
+  statusBanner: {
+    backgroundColor: '#FEF3C7',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FDE68A',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  statusBannerText: {
+    fontSize: 13,
+    color: '#92400E',
+    fontWeight: '600',
+  },
+  statusActions: {
+    flexDirection: 'row',
+    marginTop: 8,
+    gap: 8,
+  },
+  statusActionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  acceptButton: {
+    backgroundColor: theme.colors.success,
+  },
+  rejectButton: {
+    backgroundColor: theme.colors.error,
+  },
+  unblockButton: {
+    backgroundColor: theme.colors.primary,
+  },
+  statusActionText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   inputContainer: {
     padding: 12,

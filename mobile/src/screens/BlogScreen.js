@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -23,6 +23,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useAuth } from '../context/AuthContext';
+import { useAppRefresh } from '../context/AppRefreshContext';
 import { postAPI, userAPI } from '../services/api';
 import theme from '../styles/theme';
 
@@ -73,6 +74,7 @@ const hashBadWords = (text = '') => {
 
 const BlogScreen = ({ navigation, route }) => {
   const { user, refreshUser, updateFollowingOptimistic } = useAuth();
+  const { refreshTick, refreshAllPages } = useAppRefresh();
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -140,9 +142,15 @@ const BlogScreen = ({ navigation, route }) => {
   const [lightboxAttachments, setLightboxAttachments] = useState([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [failedImages, setFailedImages] = useState({});
+  const [blockingActionLoading, setBlockingActionLoading] = useState(false);
 
   const commentInputRef = useRef(null);
   const lightboxListRef = useRef(null);
+
+  const getUserId = (entity) => entity?._id || entity?.id || entity;
+  const myUserId = getUserId(user);
+  const viewingUserId = getUserId(viewingUser);
+  const isOwnProfile = Boolean(myUserId && viewingUserId && String(myUserId) === String(viewingUserId));
 
   useFocusEffect(
     useCallback(() => {
@@ -176,6 +184,11 @@ const BlogScreen = ({ navigation, route }) => {
     setRefreshing(true);
     fetchPosts();
   };
+
+  useEffect(() => {
+    if (refreshTick === 0) return;
+    fetchPosts();
+  }, [refreshTick]);
 
   const normalizeUri = (uri) => {
     if (!uri) return uri;
@@ -408,6 +421,7 @@ const BlogScreen = ({ navigation, route }) => {
       setNewContent('');
       setNewPostAttachments([]);
       fetchPosts(); // Refresh list
+      refreshAllPages('blog_post_created');
       Alert.alert('Success', 'Post created successfully!');
     } catch (error) {
       console.log('Create post error:', error);
@@ -523,10 +537,22 @@ const BlogScreen = ({ navigation, route }) => {
     setProfileModalVisible(true);
     try {
       const response = await userAPI.getProfile(userId);
-      const profileData = response.data;
-      
-      // Use isFollowing status from backend
-      setViewingUser(profileData);
+      const payload = response?.data || response;
+      const profileData = payload?.data || payload;
+      const normalizedProfile = profileData
+        ? {
+            ...profileData,
+            _id: profileData._id || profileData.id,
+            isBlockedByMe: !!profileData.isBlockedByMe,
+            hasBlockedMe: !!profileData.hasBlockedMe,
+          }
+        : null;
+
+      if (!normalizedProfile?._id) {
+        throw new Error('Invalid profile response');
+      }
+
+      setViewingUser(normalizedProfile);
     } catch (error) {
       console.log('Error fetching profile:', error);
       Alert.alert('Error', 'Failed to load user profile');
@@ -538,6 +564,11 @@ const BlogScreen = ({ navigation, route }) => {
 
   const handleToggleFollow = async () => {
     if (!viewingUser) return;
+    if (isOwnProfile) return;
+    if (viewingUser.isBlockedByMe || viewingUser.hasBlockedMe) {
+      Alert.alert('Unavailable', 'Follow action is unavailable due to block settings.');
+      return;
+    }
     
     try {
       // 1. Optimistic Update
@@ -546,17 +577,21 @@ const BlogScreen = ({ navigation, route }) => {
       setViewingUser(prev => {
         let updatedFollowers = [...(prev.followers || [])];
         if (isNowFollowing) {
-          if (!updatedFollowers.some(f => String(f._id || f) === String(user._id))) {
+          if (!updatedFollowers.some(f => String(f._id || f) === String(myUserId))) {
             updatedFollowers.push(user);
           }
         } else {
-          updatedFollowers = updatedFollowers.filter(f => String(f._id || f) !== String(user._id));
+          updatedFollowers = updatedFollowers.filter(f => String(f._id || f) !== String(myUserId));
         }
         return { ...prev, isFollowing: isNowFollowing, followers: updatedFollowers };
       });
 
       // 2. API Call
-      const response = await userAPI.toggleFollow(viewingUser._id);
+      const targetUserId = viewingUserId || viewingUser?._id;
+      if (!targetUserId) {
+        throw new Error('Missing target user id');
+      }
+      const response = await userAPI.toggleFollow(targetUserId);
       
       updateFollowingOptimistic(viewingUser, isNowFollowing);
       
@@ -577,14 +612,49 @@ const BlogScreen = ({ navigation, route }) => {
        setViewingUser(prev => {
         let updatedFollowers = [...(prev.followers || [])];
         if (originalIsFollowing) {
-           if (!updatedFollowers.some(f => String(f._id || f) === String(user._id))) {
+           if (!updatedFollowers.some(f => String(f._id || f) === String(myUserId))) {
             updatedFollowers.push(user);
           }
         } else {
-           updatedFollowers = updatedFollowers.filter(f => String(f._id || f) !== String(user._id));
+           updatedFollowers = updatedFollowers.filter(f => String(f._id || f) !== String(myUserId));
         }
         return { ...prev, isFollowing: originalIsFollowing, followers: updatedFollowers };
       });
+    }
+  };
+
+  const handleToggleBlock = async () => {
+    if (!viewingUser || isOwnProfile || blockingActionLoading) return;
+
+    setBlockingActionLoading(true);
+    try {
+      const currentlyBlocked = !!viewingUser.isBlockedByMe;
+      const targetUserId = viewingUserId || viewingUser?._id;
+      if (!targetUserId) {
+        throw new Error('Missing target user id');
+      }
+      const response = currentlyBlocked
+        ? await userAPI.unblockUser(targetUserId)
+        : await userAPI.blockUser(targetUserId);
+
+      const isBlocked = response?.isBlocked ?? !currentlyBlocked;
+      setViewingUser(prev => ({
+        ...prev,
+        isBlockedByMe: isBlocked,
+        isFollowing: isBlocked ? false : prev.isFollowing
+      }));
+
+      if (isBlocked) {
+        Alert.alert('User Blocked', 'You will no longer receive messages from this user.');
+      } else {
+        Alert.alert('User Unblocked', 'You can message and follow this user again.');
+      }
+      await refreshUser();
+    } catch (error) {
+      console.log('Error toggling block:', error);
+      Alert.alert('Error', 'Failed to update block status');
+    } finally {
+      setBlockingActionLoading(false);
     }
   };
 
@@ -633,6 +703,7 @@ const BlogScreen = ({ navigation, route }) => {
       setCommentText('');
       setReplyingTo(null);
       setCommentAttachments([]);
+      refreshAllPages('blog_comment_created');
     } catch (error) {
       console.log('Error commenting:', error);
       const msg = typeof error === 'string' 
@@ -666,6 +737,7 @@ const BlogScreen = ({ navigation, route }) => {
         try {
           await postAPI.deletePost(post._id);
           await refreshPostsAndSelection();
+          refreshAllPages('blog_post_deleted');
         } catch (error) {
           Alert.alert('Error', 'Failed to delete post');
         }
@@ -680,6 +752,7 @@ const BlogScreen = ({ navigation, route }) => {
         try {
           await postAPI.deleteComment(postId, commentId);
           await refreshPostsAndSelection(postId);
+          refreshAllPages('blog_comment_deleted');
         } catch (error) {
           Alert.alert('Error', 'Failed to delete comment');
         }
@@ -694,6 +767,7 @@ const BlogScreen = ({ navigation, route }) => {
         try {
           await postAPI.deleteReply(postId, commentId, replyId);
           await refreshPostsAndSelection(postId);
+          refreshAllPages('blog_reply_deleted');
         } catch (error) {
           Alert.alert('Error', 'Failed to delete reply');
         }
@@ -750,6 +824,7 @@ const BlogScreen = ({ navigation, route }) => {
         await refreshPostsAndSelection(editTarget.postId);
       }
 
+      refreshAllPages('blog_content_updated');
       setEditModalVisible(false);
       setEditTarget(null);
       setEditTitle('');
@@ -1208,7 +1283,9 @@ const BlogScreen = ({ navigation, route }) => {
                   
                   <View style={styles.profileInfoColumn}>
                     <Text style={styles.profileName} numberOfLines={1}>{viewingUser.name}</Text>
-                    <Text style={styles.profileEmail} numberOfLines={1}>@{viewingUser.email.split('@')[0]}</Text>
+                    <Text style={styles.profileEmail} numberOfLines={1}>
+                      @{(viewingUser.email || '').split('@')[0] || 'user'}
+                    </Text>
                     
                     <View style={styles.locationContainer}>
                       <Ionicons name="location-sharp" size={12} color={theme.colors.textSecondary} />
@@ -1224,13 +1301,10 @@ const BlogScreen = ({ navigation, route }) => {
                     <Text style={styles.statLabelCompact}>Followers</Text>
                   </View>
 
-                  {/* Show Following only if it's NOT the user's own profile */}
-                  {user?._id && viewingUser?._id && String(user._id) !== String(viewingUser._id) && (
-                    <View style={styles.statItemCompact}>
-                      <Text style={styles.statNumberCompact}>{(viewingUser.followingCount ?? viewingUser.following?.length ?? 0)}</Text>
-                      <Text style={styles.statLabelCompact}>Following</Text>
-                    </View>
-                  )}
+                  <View style={styles.statItemCompact}>
+                    <Text style={styles.statNumberCompact}>{(viewingUser.followingCount ?? viewingUser.following?.length ?? 0)}</Text>
+                    <Text style={styles.statLabelCompact}>Following</Text>
+                  </View>
 
                   <View style={styles.statItemCompact}>
                     <Text style={styles.statNumberCompact}>{viewingUser.stats?.trees || 0}</Text>
@@ -1243,21 +1317,22 @@ const BlogScreen = ({ navigation, route }) => {
                   </View>
                 </View>
 
-                {/* Actions Row (Only for others) */}
-                {viewingUser?._id && String(user?._id) !== String(viewingUser._id) && (
+                {/* Actions Row (Own vs Other User) */}
+                {!isOwnProfile && (
                   <View style={styles.profileActionsRow}>
                     <TouchableOpacity 
                       style={[
                         styles.followButtonCompact,
-                        viewingUser.isFollowing && styles.followingButtonCompact
+                        (viewingUser.isFollowing || viewingUser.isBlockedByMe || viewingUser.hasBlockedMe) && styles.followingButtonCompact
                       ]}
                       onPress={handleToggleFollow}
+                      disabled={viewingUser.isBlockedByMe || viewingUser.hasBlockedMe}
                     >
                       <Text style={[
                         styles.followButtonTextCompact,
-                        viewingUser.isFollowing && styles.followingButtonTextCompact
+                        (viewingUser.isFollowing || viewingUser.isBlockedByMe || viewingUser.hasBlockedMe) && styles.followingButtonTextCompact
                       ]}>
-                        {viewingUser.isFollowing ? 'Following' : 'Follow'}
+                        {viewingUser.isBlockedByMe ? 'Blocked' : viewingUser.hasBlockedMe ? 'Unavailable' : (viewingUser.isFollowing ? 'Following' : 'Follow')}
                       </Text>
                     </TouchableOpacity>
 
@@ -1267,8 +1342,45 @@ const BlogScreen = ({ navigation, route }) => {
                         setProfileModalVisible(false);
                         navigation.navigate('Chat', { otherUser: viewingUser });
                       }}
+                      disabled={viewingUser.isBlockedByMe || viewingUser.hasBlockedMe}
                     >
-                      <Text style={styles.messageButtonTextCompact}>Message</Text>
+                      <Text style={styles.messageButtonTextCompact}>
+                        {viewingUser.hasBlockedMe ? 'Unavailable' : 'Message'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={styles.messageButtonCompact}
+                      onPress={handleToggleBlock}
+                      disabled={blockingActionLoading}
+                    >
+                      <Text style={styles.messageButtonTextCompact}>
+                        {blockingActionLoading ? 'Please wait...' : (viewingUser.isBlockedByMe ? 'Unblock' : 'Block')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {isOwnProfile && (
+                  <View style={styles.profileActionsRow}>
+                    <TouchableOpacity 
+                      style={styles.messageButtonCompact}
+                      onPress={() => {
+                        setProfileModalVisible(false);
+                        navigation.navigate('Inbox');
+                      }}
+                    >
+                      <Text style={styles.messageButtonTextCompact}>Messages</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={styles.messageButtonCompact}
+                      onPress={() => {
+                        setProfileModalVisible(false);
+                        navigation.navigate('Profile');
+                      }}
+                    >
+                      <Text style={styles.messageButtonTextCompact}>Followers</Text>
                     </TouchableOpacity>
                   </View>
                 )}

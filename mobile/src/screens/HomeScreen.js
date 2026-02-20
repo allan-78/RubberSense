@@ -27,6 +27,7 @@ import { StatusBar } from 'expo-status-bar';
 import { LineChart } from 'react-native-chart-kit';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
+import { useAppRefresh } from '../context/AppRefreshContext';
 import { treeAPI, scanAPI, latexAPI, marketAPI } from '../services/api';
 import { theme } from '../styles/theme';
 import AIGuide from '../components/AIGuide';
@@ -100,12 +101,14 @@ const HomeScreen = () => {
   const navigation = useNavigation();
   const { user, logout } = useAuth();
   const { unreadCount, checkWeatherAlert } = useNotification();
+  const { refreshTick } = useAppRefresh();
   const mapRef = useRef(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAIGuide, setShowAIGuide] = useState(true);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [lastDataUpdatedAt, setLastDataUpdatedAt] = useState(null);
   
   // Dashboard Stats
   const [stats, setStats] = useState({
@@ -459,6 +462,27 @@ const HomeScreen = () => {
           let scanStatus = s.processingStatus;
           let statusColor = 'default'; // default, success, warning, error
 
+          // Helper to check AI diagnosis for healthy status
+          const aiDiagnosisSaysHealthy = (aiDiagnosis) => {
+            const toText = (value) => {
+              if (!value) return '';
+              if (Array.isArray(value)) return value.map(toText).join(' ');
+              if (typeof value === 'object') return Object.values(value).map(toText).join(' ');
+              return String(value);
+            };
+        
+            const text = toText(aiDiagnosis).toLowerCase();
+            if (!text) return false;
+            if (
+              /no\s+(signs?|evidence)\s+of\s+(disease|infection)|no disease detected|disease[-\s]?free|appears healthy|tree is healthy/.test(text)
+            ) {
+              return true;
+            }
+            const hasHealthy = /\bhealthy\b/.test(text);
+            const hasDisease = /\b(diseased?|infection|infected|blight|mildew|rot|canker|fungal?|lesion|necrosis|rust|pustule)\b/.test(text);
+            return hasHealthy && !hasDisease;
+          };
+
           if (s.processingStatus === 'completed') {
              let specificStatus = null;
              const partLower = s.treeIdentification?.detectedPart?.toLowerCase();
@@ -469,15 +493,24 @@ const HomeScreen = () => {
                 specificStatus = s.leafAnalysis?.healthStatus;
              }
 
+             // Check AI Diagnosis override first
+             const primaryDisease = s.diseaseDetection?.[0];
+             const isAIHealthy = primaryDisease && aiDiagnosisSaysHealthy(primaryDisease.ai_diagnosis);
+
              // Use specific status if available and valid
              if (specificStatus && specificStatus !== 'Unknown') {
                 scanStatus = specificStatus;
              } else if (s.diseaseDetection?.length > 0) {
                 // Fallback to disease detection
                 const diseaseName = s.diseaseDetection[0].name;
-                scanStatus = (diseaseName === 'No disease detected' || diseaseName === 'None') 
-                  ? 'Healthy' 
-                  : diseaseName;
+                
+                if (isAIHealthy) {
+                    scanStatus = 'Healthy';
+                } else {
+                    scanStatus = (diseaseName === 'No disease detected' || diseaseName === 'None') 
+                      ? 'Healthy' 
+                      : diseaseName;
+                }
              } else {
                 scanStatus = 'Healthy';
              }
@@ -518,6 +551,7 @@ const HomeScreen = () => {
       .slice(0, 20); // Increase slice to allow filtering
 
       setRecentScans(recentActivity);
+      setLastDataUpdatedAt(new Date().toISOString());
       
       // Mark first load as complete
       if (!silent) setIsFirstLoad(false);
@@ -536,6 +570,11 @@ const HomeScreen = () => {
     loadData();
     if (location) fetchWeather(location.coords.latitude, location.coords.longitude);
   };
+
+  useEffect(() => {
+    if (refreshTick === 0) return;
+    loadData(true);
+  }, [refreshTick]);
 
   const handleMarkerPress = (farm) => {
     mapRef.current?.animateToRegion({
@@ -954,6 +993,11 @@ const HomeScreen = () => {
           {/* RECENT ACTIVITY */}
           <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12}}>
             <Text style={[styles.sectionTitle, {marginBottom: 0}]}>Recent Activity</Text>
+            <Text style={styles.updatedLabel}>
+              {lastDataUpdatedAt
+                ? `Updated ${new Date(lastDataUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : 'Syncing...'}
+            </Text>
           </View>
           
           {/* Filter Chips */}
@@ -978,16 +1022,12 @@ const HomeScreen = () => {
           </View>
 
           <View style={styles.activityCard}>
-            {(recentScans.length > 0 ? recentScans : [
-              { id: 1, type: 'scan', title: 'Tree #402 Scan', time: '2 hours ago', status: 'Healthy', detectedPart: 'leaf', data: {} },
-              { id: 2, type: 'latex', title: 'Latex Collection', time: '5 hours ago', status: '12.5L', data: {} },
-              { id: 3, type: 'alert', title: 'Pest Alert', time: 'Yesterday', status: 'Resolved', detectedPart: 'trunk', data: {} },
-            ])
+            {(recentScans.length > 0 ? recentScans : [])
             .filter(item => {
                  if (activeActivityFilter === 'All') return true;
                  if (activeActivityFilter === 'Latex') return item.type === 'latex';
-                 if (activeActivityFilter === 'Leaf') return (item.type === 'scan' || item.type === 'alert') && item.detectedPart === 'leaf'; // Include alert if relevant or mock
-                 if (activeActivityFilter === 'Trunk') return (item.type === 'scan' || item.type === 'alert') && item.detectedPart === 'trunk';
+                 if (activeActivityFilter === 'Leaf') return item.type === 'scan' && item.detectedPart === 'leaf';
+                 if (activeActivityFilter === 'Trunk') return item.type === 'scan' && item.detectedPart === 'trunk';
                  return true;
             })
             .slice(0, 5)
@@ -1329,6 +1369,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: theme.colors.text,
     marginBottom: 16,
+  },
+  updatedLabel: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    fontWeight: '500',
   },
   bentoRow: {
     flexDirection: 'row',

@@ -36,6 +36,13 @@ const protect = async (req, res, next) => {
         });
       }
 
+      if (req.user.isActive === false) {
+        return res.status(403).json({
+          success: false,
+          error: 'This account is deactivated'
+        });
+      }
+
       // Add id property because lean() returns plain object with _id
       req.user.id = req.user._id.toString();
 

@@ -17,6 +17,8 @@ import {
   FlatList,
   Platform,
   Dimensions,
+  Animated,
+  Easing,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -29,11 +31,16 @@ import { scanAPI, treeAPI, latexAPI } from '../services/api';
 import theme from '../styles/theme';
 import CustomButton from '../components/CustomButton';
 import { useAuth } from '../context/AuthContext';
+import { useAppRefresh } from '../context/AppRefreshContext';
 
 const { width, height } = Dimensions.get('window');
+const isSmallScreen = width < 380;
+const TRUNK_FRAME_HEIGHT = isSmallScreen ? height * 0.45 : height * 0.55;
+const SQUARE_FRAME_SIZE = isSmallScreen ? width * 0.65 : width * 0.75;
 
 const CameraScreen = ({ navigation }) => {
   const { user, resendVerificationEmail } = useAuth();
+  const { refreshAllPages } = useAppRefresh();
   const [permission, requestPermission] = useCameraPermissions();
   const [isCameraActive, setIsCameraActive] = useState(false);
   const cameraRef = useRef(null);
@@ -49,6 +56,7 @@ const CameraScreen = ({ navigation }) => {
   const [loadingTrees, setLoadingTrees] = useState(false);
   const [progress, setProgress] = useState(0);
   const [scanResult, setScanResult] = useState(null);
+  const [scanCategoryError, setScanCategoryError] = useState(null);
   
   // Latex Mode State
   const [scanType, setScanType] = useState('tree'); // 'tree' or 'latex'
@@ -57,6 +65,82 @@ const CameraScreen = ({ navigation }) => {
   const [volume, setVolume] = useState('');
   const [dryWeight, setDryWeight] = useState('');
   const [isARMode, setIsARMode] = useState(true);
+  const scanLineAnim = useRef(new Animated.Value(0)).current;
+  const shutterPulseAnim = useRef(new Animated.Value(1)).current;
+
+  const selectedCategory =
+    scanType === 'latex' ? 'latex' : (treePart === 'leaf' ? 'leaf' : 'trunk');
+
+  const selectedCategoryLabel =
+    selectedCategory === 'trunk' ? 'Trunks' : selectedCategory === 'leaf' ? 'Leaf' : 'Latex';
+
+  const setScannerCategory = (category) => {
+    const normalized = String(category || '').toLowerCase();
+
+    setVolume('');
+    setDryWeight('');
+
+    if (normalized === 'latex') {
+      setScanType('latex');
+      return;
+    }
+
+    setScanType('tree');
+    setTreePart(normalized === 'leaf' ? 'leaf' : 'trunk');
+    setBatchID('');
+  };
+
+  useEffect(() => {
+    if (!isCameraActive) {
+      scanLineAnim.setValue(0);
+      shutterPulseAnim.setValue(1);
+      return;
+    }
+
+    const lineLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scanLineAnim, {
+          toValue: 1,
+          duration: 1800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(scanLineAnim, {
+          toValue: 0,
+          duration: 1800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shutterPulseAnim, {
+          toValue: 1.07,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(shutterPulseAnim, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    lineLoop.start();
+    pulseLoop.start();
+
+    return () => {
+      lineLoop.stop();
+      pulseLoop.stop();
+      scanLineAnim.setValue(0);
+      shutterPulseAnim.setValue(1);
+    };
+  }, [isCameraActive, scanLineAnim, shutterPulseAnim]);
 
   // Auto-generate Batch ID
   useEffect(() => {
@@ -210,6 +294,35 @@ const CameraScreen = ({ navigation }) => {
     }
   };
 
+  const openCategoryMismatchAlert = (expectedCategory) => {
+    const category = String(expectedCategory || '').toLowerCase();
+
+    const categoryMeta = {
+      leaf: {
+        title: 'Leaf Not Detected',
+        message: 'Detected content is not leaf. Please capture a clear leaf image and try again.'
+      },
+      trunk: {
+        title: 'Trunk Not Detected',
+        message: 'Detected content is not trunk. Please capture a clear trunk image and try again.'
+      },
+      latex: {
+        title: 'Latex Not Detected',
+        message: 'Detected content is not latex. Please capture a clear latex sample image and try again.'
+      }
+    };
+
+    const fallbackMeta = {
+      title: 'Category Mismatch',
+      message: 'Detected content does not match the selected scanner category.'
+    };
+
+    setScanCategoryError({
+      expected: category,
+      ...(categoryMeta[category] || fallbackMeta)
+    });
+  };
+
   const uploadScan = async () => {
     if (!image) {
       Alert.alert('Error', 'Please select an image first');
@@ -234,6 +347,7 @@ const CameraScreen = ({ navigation }) => {
 
     console.log('📸 Starting upload with image:', image);
 
+    setScanCategoryError(null);
     setUploading(true);
     setProgress(0);
 
@@ -319,6 +433,7 @@ const CameraScreen = ({ navigation }) => {
             type: 'tree',
             data: response.data
         });
+        refreshAllPages('tree_scan_completed');
         
       } else {
         formData.append('batchID', batchID);
@@ -336,6 +451,7 @@ const CameraScreen = ({ navigation }) => {
             type: 'latex',
             data: response.data
         });
+        refreshAllPages('latex_scan_completed');
       }
       
       clearInterval(progressInterval);
@@ -376,13 +492,20 @@ const CameraScreen = ({ navigation }) => {
       
       console.error('Parsed error message:', errorMessage);
       console.error('Debug info:', debugInfo);
+      const normalizedError = errorMessage.toLowerCase();
       
-      if (errorMessage.toLowerCase().includes("not appear to contain a tree")) {
+      if (normalizedError.includes("not appear to contain a tree")) {
         Alert.alert(
           'No Tree Detected 🌳', 
           'The image does not appear to contain a tree. Please capture a clear image of a rubber tree.'
         );
-      } else if (errorMessage.toLowerCase().includes('network')) {
+      } else if (normalizedError.includes("detected part non-leaf only")) {
+        openCategoryMismatchAlert('leaf');
+      } else if (normalizedError.includes("detected part non-trunk only")) {
+        openCategoryMismatchAlert('trunk');
+      } else if (normalizedError.includes("detected part non-latex only")) {
+        openCategoryMismatchAlert('latex');
+      } else if (normalizedError.includes('network')) {
         Alert.alert(
           'Network Error',
           'Cannot connect to server. Please check:\n\n1. Your internet connection\n2. Server is running\n3. You are on the same WiFi network',
@@ -415,46 +538,19 @@ const CameraScreen = ({ navigation }) => {
     }
   };
 
-  // Test backend connection
-  const testBackendConnection = async () => {
-    try {
-      console.log('🧪 Testing backend connection...');
-      
-      // Try multiple endpoints to diagnose
-      const endpoints = [
-        { name: 'Trees API', method: () => treeAPI.getAll() },
-        { name: 'Auth API', method: () => api.get('/api/auth/test-connection').catch(() => ({ status: 'skipped' })) } // Optional check
-      ];
-
-      const response = await treeAPI.getAll();
-      const treeCount = (response.data || response || []).length;
-      
-      console.log('✅ Backend is reachable!', response);
-      Alert.alert(
-        'Connection Successful ✅', 
-        `Successfully connected to backend.\nURL: ${api.defaults.baseURL}\nTrees found: ${treeCount}`
-      );
-    } catch (error) {
-      console.error('❌ Backend test failed:', error);
-      
-      let errorMsg = error.message || 'Unknown error';
-      if (errorMsg.includes('Network Error')) {
-        errorMsg += '\n\nPossible causes:\n1. Server not running\n2. Different WiFi network\n3. Firewall blocking port 5000';
-        if (Platform.OS === 'android') {
-          errorMsg += '\n4. Emulator network bridge issue';
-        }
-      }
-
-      Alert.alert(
-        'Connection Failed ❌',
-        `Cannot reach backend server.\n\n${errorMsg}`
-      );
-    }
-  };
-
   // ------------------------------------------------------------------
   // Camera View Overlay
   // ------------------------------------------------------------------
+  const trunkScanLineY = scanLineAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [18, TRUNK_FRAME_HEIGHT - 22],
+  });
+
+  const squareScanLineY = scanLineAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [18, SQUARE_FRAME_SIZE - 22],
+  });
+
   if (isCameraActive) {
     return (
       <View style={styles.cameraContainer}>
@@ -482,11 +578,14 @@ const CameraScreen = ({ navigation }) => {
                </TouchableOpacity>
                
                <View style={styles.arBadge}>
-                 <MaterialCommunityIcons name="augmented-reality" size={18} color={theme.colors.primary} />
-                 <Text style={styles.arText}>AI Assistant Active</Text>
-               </View>
+                  <MaterialCommunityIcons name="radar" size={18} color="#A7F3D0" />
+                  <Text style={styles.arText}>{selectedCategoryLabel} Mode</Text>
+                </View>
 
-               <View style={{ width: 40 }} /> 
+               <View style={styles.liveBadge}>
+                 <View style={styles.liveDot} />
+                 <Text style={styles.liveText}>LIVE</Text>
+               </View>
             </View>
 
             {isARMode && (
@@ -495,67 +594,87 @@ const CameraScreen = ({ navigation }) => {
                   treePart === 'trunk' ? (
                     <>
                       <View style={styles.viewFinder}>
+                        <View style={styles.scanFrameGlow} />
                         <View style={[styles.corner, styles.cornerTL]} />
                         <View style={[styles.corner, styles.cornerTR]} />
                         <View style={[styles.corner, styles.cornerBL]} />
                         <View style={[styles.corner, styles.cornerBR]} />
+                        <Animated.View style={[styles.scanSweepLine, { transform: [{ translateY: trunkScanLineY }] }]} />
+                        <View style={styles.scanCenterDot} />
                         
-                        <View style={styles.angleGuideContainer}>
-                          <View style={styles.angleLine} />
-                          <Text style={styles.angleText}>30° Angle</Text>
-                        </View>
                       </View>
-                      <Text style={styles.guideInstruction}>Align trunk within frame</Text>
+                      <Text style={styles.guideInstruction}>Frame trunk bark texture inside the guides</Text>
                     </>
                   ) : (
                     <>
                       <View style={styles.latexViewFinder}>
+                        <View style={styles.scanFrameGlow} />
                         <View style={[styles.corner, styles.cornerTL]} />
                         <View style={[styles.corner, styles.cornerTR]} />
                         <View style={[styles.corner, styles.cornerBL]} />
                         <View style={[styles.corner, styles.cornerBR]} />
+                        <Animated.View style={[styles.scanSweepLine, { transform: [{ translateY: squareScanLineY }] }]} />
+                        <View style={styles.scanCenterDot} />
                         <MaterialIcons name="eco" size={64} color="rgba(255,255,255,0.2)" />
                       </View>
-                      <Text style={styles.guideInstruction}>Center leaf for disease check</Text>
+                      <Text style={styles.guideInstruction}>Center one leaf and keep focus sharp</Text>
                     </>
                   )
                 ) : (
                   <>
                     <View style={styles.latexViewFinder}>
+                        <View style={styles.scanFrameGlow} />
                         <View style={[styles.corner, styles.cornerTL]} />
                         <View style={[styles.corner, styles.cornerTR]} />
                         <View style={[styles.corner, styles.cornerBL]} />
                         <View style={[styles.corner, styles.cornerBR]} />
+                        <Animated.View style={[styles.scanSweepLine, { transform: [{ translateY: squareScanLineY }] }]} />
+                        <View style={styles.scanCenterDot} />
                         <View style={styles.liquidLevelGuide} />
                         <MaterialCommunityIcons name="water" size={64} color="rgba(255,255,255,0.2)" />
                     </View>
-                    <Text style={styles.guideInstruction}>Ensure good lighting on latex</Text>
+                    <Text style={styles.guideInstruction}>Capture latex sample with balanced lighting</Text>
                   </>
                 )}
               </View>
             )}
 
             <View style={styles.cameraControls}>
-               {scanType === 'tree' && (
-                <View style={styles.cameraToggleWrapper}>
-                  <TouchableOpacity 
-                    style={[styles.cameraToggle, treePart === 'trunk' && styles.cameraToggleActive]}
-                    onPress={() => setTreePart('trunk')}
-                  >
-                    <Text style={[styles.cameraToggleText, treePart === 'trunk' && styles.cameraToggleTextActive]}>Trunk</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={[styles.cameraToggle, treePart === 'leaf' && styles.cameraToggleActive]}
-                    onPress={() => setTreePart('leaf')}
-                  >
-                    <Text style={[styles.cameraToggleText, treePart === 'leaf' && styles.cameraToggleTextActive]}>Leaf</Text>
-                  </TouchableOpacity>
-                </View>
-               )}
+               <View style={styles.cameraCategoryRow}>
+                 <TouchableOpacity
+                   style={[styles.cameraCategoryChip, selectedCategory === 'trunk' && styles.cameraCategoryChipActive]}
+                   onPress={() => setScannerCategory('trunk')}
+                   activeOpacity={0.85}
+                 >
+                   <Text style={[styles.cameraCategoryText, selectedCategory === 'trunk' && styles.cameraCategoryTextActive]}>
+                     Trunks
+                   </Text>
+                 </TouchableOpacity>
+                 <TouchableOpacity
+                   style={[styles.cameraCategoryChip, selectedCategory === 'leaf' && styles.cameraCategoryChipActive]}
+                   onPress={() => setScannerCategory('leaf')}
+                   activeOpacity={0.85}
+                 >
+                   <Text style={[styles.cameraCategoryText, selectedCategory === 'leaf' && styles.cameraCategoryTextActive]}>
+                     Leaf
+                   </Text>
+                 </TouchableOpacity>
+                 <TouchableOpacity
+                   style={[styles.cameraCategoryChip, selectedCategory === 'latex' && styles.cameraCategoryChipActive]}
+                   onPress={() => setScannerCategory('latex')}
+                   activeOpacity={0.85}
+                 >
+                   <Text style={[styles.cameraCategoryText, selectedCategory === 'latex' && styles.cameraCategoryTextActive]}>
+                     Latex
+                   </Text>
+                 </TouchableOpacity>
+               </View>
 
-               <TouchableOpacity onPress={takePicture} activeOpacity={0.8} style={styles.shutterButton}>
-                  <View style={styles.shutterInner} />
-               </TouchableOpacity>
+               <Animated.View style={{ transform: [{ scale: shutterPulseAnim }] }}>
+                 <TouchableOpacity onPress={takePicture} activeOpacity={0.8} style={styles.shutterButton}>
+                    <View style={styles.shutterInner} />
+                 </TouchableOpacity>
+               </Animated.View>
             </View>
           </View>
         </CameraView>
@@ -575,7 +694,7 @@ const CameraScreen = ({ navigation }) => {
         </View>
         <Text style={styles.lockTitle}>Access Restricted</Text>
         <Text style={styles.lockMessage}>
-          Please verify your email address to unlock AI scanning capabilities.
+          Please verify your email address to unlock scanning capabilities.
         </Text>
         <CustomButton
           title="Resend Verification Email"
@@ -590,34 +709,30 @@ const CameraScreen = ({ navigation }) => {
   return (
     <View style={styles.container}>
       <LinearGradient
-        colors={[theme.colors.background, '#F1F5F9']}
+        colors={['#F8FAFC', '#E2E8F0']}
         style={StyleSheet.absoluteFill}
       />
       
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
-          <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
+          <Ionicons name="arrow-back" size={24} color="#E2E8F0" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>New Scan</Text>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          {/* Test Backend Button */}
-          <TouchableOpacity 
-            onPress={testBackendConnection}
-            style={[styles.iconButton, { backgroundColor: '#E0F2FE' }]}
-          >
-            <Ionicons name="cloud-outline" size={22} color="#0284C7" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            onPress={() => {
-              setImage(null);
-              setScanResult(null);
-            }} 
-            style={[styles.iconButton, !image && { opacity: 0 }]}
-            disabled={!image}
-          >
-            <Ionicons name="refresh-outline" size={22} color={theme.colors.text} />
-          </TouchableOpacity>
+        <View style={styles.headerTitleWrap}>
+          <Text style={styles.headerTitle}>Rubber Scan</Text>
+          <Text style={styles.headerSubtitle}>
+            {selectedCategoryLabel} scanner
+          </Text>
         </View>
+        <TouchableOpacity 
+          onPress={() => {
+            setImage(null);
+            setScanResult(null);
+          }} 
+          style={[styles.iconButton, !image && { opacity: 0 }]}
+          disabled={!image}
+        >
+          <Ionicons name="refresh-outline" size={22} color="#E2E8F0" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -784,74 +899,86 @@ const CameraScreen = ({ navigation }) => {
           </View>
         ) : (
           <>
+            <View style={styles.scannerHeroCard}>
+              <LinearGradient
+                colors={['#0F172A', '#1E293B']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.scannerHeroGradient}
+              >
+                <View style={styles.scannerHeroHeader}>
+                  <View style={styles.scannerHeroIcon}>
+                    <MaterialCommunityIcons name="radar" size={22} color="#A7F3D0" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.scannerHeroTitle}>Rubber Scan Studio</Text>
+                    <Text style={styles.scannerHeroSub}>Precision capture for Latex, Trunks, and Leaf</Text>
+                  </View>
+                </View>
+                <View style={styles.scannerHeroPills}>
+                  <View style={styles.scannerHeroPill}>
+                    <Text style={styles.scannerHeroPillText}>{selectedCategoryLabel.toUpperCase()}</Text>
+                  </View>
+                  <View style={styles.scannerHeroPill}>
+                    <Text style={styles.scannerHeroPillText}>{image ? 'READY TO ANALYZE' : 'CAPTURE REQUIRED'}</Text>
+                  </View>
+                </View>
+              </LinearGradient>
+            </View>
+
             <View style={styles.sectionContainer}>
-              <Text style={styles.sectionLabel}>Select Scan Type</Text>
+              <Text style={styles.sectionLabel}>Scanner Category</Text>
               <View style={styles.modeRow}>
                 <TouchableOpacity 
-                  style={[styles.modeChip, scanType === 'tree' && styles.modeChipActive]}
-                  onPress={() => {
-                      setScanType('tree');
-                      setVolume('');
-                      setDryWeight('');
-                      setBatchID('');
-                  }}
+                  style={[styles.modeChip, selectedCategory === 'trunk' && styles.modeChipActive]}
+                  onPress={() => setScannerCategory('trunk')}
                   activeOpacity={0.8}
                 >
-                  <View style={[styles.modeIconBg, scanType === 'tree' && styles.modeIconBgActive]}>
+                  <View style={[styles.modeIconBg, selectedCategory === 'trunk' && styles.modeIconBgActive]}>
                     <MaterialCommunityIcons 
-                      name="tree-outline" 
+                      name="tree" 
                       size={24} 
-                      color={scanType === 'tree' ? '#FFF' : theme.colors.textSecondary} 
+                      color={selectedCategory === 'trunk' ? '#FFF' : theme.colors.textSecondary} 
                     />
                   </View>
-                  <Text style={[styles.modeChipText, scanType === 'tree' && styles.modeChipTextActive]}>Tree Health</Text>
+                  <Text style={[styles.modeChipText, selectedCategory === 'trunk' && styles.modeChipTextActive]}>Trunks</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
-                  style={[styles.modeChip, scanType === 'latex' && styles.modeChipActive]}
-                  onPress={() => {
-                      setScanType('latex');
-                      setVolume('');
-                      setDryWeight('');
-                  }}
+                  style={[styles.modeChip, selectedCategory === 'leaf' && styles.modeChipActive]}
+                  onPress={() => setScannerCategory('leaf')}
                   activeOpacity={0.8}
                 >
-                   <View style={[styles.modeIconBg, scanType === 'latex' && styles.modeIconBgActive]}>
+                   <View style={[styles.modeIconBg, selectedCategory === 'leaf' && styles.modeIconBgActive]}>
+                    <MaterialIcons 
+                      name="eco" 
+                      size={24} 
+                      color={selectedCategory === 'leaf' ? '#FFF' : theme.colors.textSecondary} 
+                    />
+                  </View>
+                  <Text style={[styles.modeChipText, selectedCategory === 'leaf' && styles.modeChipTextActive]}>Leaf</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.modeChip, selectedCategory === 'latex' && styles.modeChipActive]}
+                  onPress={() => setScannerCategory('latex')}
+                  activeOpacity={0.8}
+                >
+                   <View style={[styles.modeIconBg, selectedCategory === 'latex' && styles.modeIconBgActive]}>
                     <MaterialCommunityIcons 
                       name="water-outline" 
                       size={24} 
-                      color={scanType === 'latex' ? '#FFF' : theme.colors.textSecondary} 
+                      color={selectedCategory === 'latex' ? '#FFF' : theme.colors.textSecondary} 
                     />
                   </View>
-                  <Text style={[styles.modeChipText, scanType === 'latex' && styles.modeChipTextActive]}>Latex Quality</Text>
+                  <Text style={[styles.modeChipText, selectedCategory === 'latex' && styles.modeChipTextActive]}>Latex</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
-            {scanType === 'tree' && (
-              <View style={styles.subModeContainer}>
-                 <View style={styles.segmentControl}>
-                    <TouchableOpacity 
-                      style={[styles.segmentBtn, treePart === 'trunk' && styles.segmentBtnActive]}
-                      onPress={() => setTreePart('trunk')}
-                    >
-                      <Text style={[styles.segmentText, treePart === 'trunk' && styles.segmentTextActive]}>Trunk</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={[styles.segmentBtn, treePart === 'leaf' && styles.segmentBtnActive]}
-                      onPress={() => setTreePart('leaf')}
-                    >
-                      <Text style={[styles.segmentText, treePart === 'leaf' && styles.segmentTextActive]}>Leaf</Text>
-                    </TouchableOpacity>
-                 </View>
-              </View>
-            )}
-
             {trees.length > 0 && (
               <View style={styles.inputWrapper}>
-                <Text style={styles.inputLabel}>
-                   {scanType === 'tree' ? 'Target Tree' : 'Linked Tree Profile'}
-                </Text>
+                <Text style={styles.inputLabel}>{scanType === 'latex' ? 'Linked Tree' : 'Target Tree'}</Text>
                 <TouchableOpacity 
                   style={styles.dropdownButton}
                   onPress={() => setModalVisible(true)}
@@ -949,9 +1076,7 @@ const CameraScreen = ({ navigation }) => {
                       <Ionicons name="close" size={20} color="#FFF" />
                     </TouchableOpacity>
                     <View style={styles.imageBadge}>
-                      <Text style={styles.imageBadgeText}>
-                        {scanType === 'tree' ? 'Tree Scan' : 'Latex Sample'}
-                      </Text>
+                      <Text style={styles.imageBadgeText}>{selectedCategoryLabel} Scan</Text>
                     </View>
                  </View>
                ) : (
@@ -961,9 +1086,11 @@ const CameraScreen = ({ navigation }) => {
                     </View>
                     <Text style={styles.placeholderTitle}>Capture or Upload</Text>
                     <Text style={styles.placeholderDesc}>
-                      {scanType === 'tree' 
-                        ? 'Take a clear photo of the tree trunk or leaf for analysis.' 
-                        : 'Take a well-lit photo of the latex sample for quality check.'}
+                      {selectedCategory === 'trunk'
+                        ? 'Capture a clear photo of trunk bark texture.'
+                        : selectedCategory === 'leaf'
+                        ? 'Capture a focused photo of a single leaf.'
+                        : 'Capture a well-lit latex sample for grading.'}
                     </Text>
                     
                     <View style={styles.pickerButtons}>
@@ -992,10 +1119,10 @@ const CameraScreen = ({ navigation }) => {
                     <>
                       <MaterialCommunityIcons name="creation" size={24} color="#FFF" />
                       <Text style={styles.analyzeButtonText}>
-                         {scanType === 'tree' ? 'Analyze Health' : 'Assess Quality'}
+                         {`Run ${selectedCategoryLabel} Scan`}
                       </Text>
                     </>
-                 )}
+                  )}
                </TouchableOpacity>
             )}
 
@@ -1083,6 +1210,43 @@ const CameraScreen = ({ navigation }) => {
         </View>
       </Modal>
 
+      {/* Category Mismatch Error Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={Boolean(scanCategoryError)}
+        onRequestClose={() => setScanCategoryError(null)}
+      >
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingCard}>
+            <View style={{ 
+                width: 72, height: 72, borderRadius: 36, 
+                backgroundColor: '#FEE2E2', justifyContent: 'center', alignItems: 'center',
+                marginBottom: 20
+            }}>
+               <MaterialCommunityIcons name="alert-circle-outline" size={36} color="#EF4444" />
+            </View>
+            
+            <Text style={{ fontSize: 20, fontWeight: '800', color: '#1E293B', marginBottom: 12, textAlign: 'center' }}>
+                {scanCategoryError?.title || 'Category Mismatch'}
+            </Text>
+            
+            <Text style={{ fontSize: 15, color: '#64748B', textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
+                {scanCategoryError?.message || 'Detected content does not match the selected scanner category.'}
+            </Text>
+            
+            <CustomButton 
+              title="Try Again" 
+              onPress={() => {
+                setScanCategoryError(null);
+                setImage(null);
+              }}
+              style={{ width: '100%', backgroundColor: '#EF4444' }}
+            />
+          </View>
+        </View>
+      </Modal>
+
       {/* Upload Progress Overlay */}
       <Modal visible={uploading} transparent animationType="fade">
          <View style={styles.loadingOverlay}>
@@ -1108,21 +1272,31 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: Platform.OS === 'ios' ? 60 : 50,
-    paddingBottom: 20,
-    backgroundColor: 'rgba(255,255,255,0.95)',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 62 : 52,
+    paddingBottom: 18,
+    backgroundColor: '#0B1220',
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: 'rgba(148,163,184,0.2)',
     zIndex: 10,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    marginHorizontal: 12,
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: theme.colors.text,
-    letterSpacing: -0.5,
+    color: '#F8FAFC',
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 2,
+    fontWeight: '600',
   },
   iconButton: {
     width: 44,
@@ -1130,75 +1304,134 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 22,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: 'rgba(15,23,42,0.85)',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: 'rgba(148,163,184,0.25)',
   },
   scrollContent: {
-    padding: 24,
+    padding: 20,
+    paddingTop: 22,
     paddingBottom: 120,
+  },
+  scannerHeroCard: {
+    borderRadius: 26,
+    overflow: 'hidden',
+    marginBottom: 24,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.28,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  scannerHeroGradient: {
+    paddingHorizontal: 18,
+    paddingVertical: 20,
+  },
+  scannerHeroHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  scannerHeroIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: 'rgba(2, 6, 23, 0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(45, 212, 191, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  scannerHeroTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  scannerHeroSub: {
+    color: '#C7D2FE',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  scannerHeroPills: {
+    flexDirection: 'row',
+    marginTop: 14,
+    gap: 8,
+  },
+  scannerHeroPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.32)',
+    backgroundColor: 'rgba(30, 41, 59, 0.45)',
+  },
+  scannerHeroPillText: {
+    color: '#E0E7FF',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.35,
   },
   sectionContainer: {
     marginBottom: 32,
   },
   sectionLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
-    marginBottom: 16,
+    color: '#475569',
+    marginBottom: 14,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.65,
   },
   modeRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   modeChip: {
     flex: 1,
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 20,
-    paddingHorizontal: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 8,
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    gap: 12,
+    borderColor: '#CBD5E1',
+    gap: 8,
     shadowColor: '#64748B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
     elevation: 2,
   },
   modeChipActive: {
-    backgroundColor: '#FFFFFF',
-    borderColor: theme.colors.primary,
+    backgroundColor: '#F8FAFC',
+    borderColor: '#0EA5A4',
     borderWidth: 2,
-    shadowColor: theme.colors.primary,
-    shadowOpacity: 0.1,
+    shadowColor: '#0F766E',
+    shadowOpacity: 0.2,
     shadowRadius: 12,
     elevation: 4,
   },
   modeIconBg: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#F1F5F9',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#EEF2FF',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modeIconBgActive: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: '#0EA5A4',
   },
   modeChipText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#64748B',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#475569',
   },
   modeChipTextActive: {
-    color: theme.colors.primary,
-    fontWeight: '700',
+    color: '#0F172A',
+    fontWeight: '800',
   },
   subModeContainer: {
     alignItems: 'center',
@@ -1246,15 +1479,16 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
     fontSize: 16,
-    color: '#1E293B',
+    color: '#0F172A',
   },
   inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: '#334155',
     marginBottom: 8,
+    letterSpacing: 0.3,
   },
   dropdownButton: {
     flexDirection: 'row',
@@ -1262,14 +1496,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
     padding: 16,
-    borderRadius: 20,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.02,
+    shadowOpacity: 0.04,
     shadowRadius: 8,
-    elevation: 1,
+    elevation: 2,
   },
   dropdownContent: {
     flexDirection: 'row',
@@ -1284,29 +1518,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   dropdownValue: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#0F172A',
   },
   dropdownSub: {
-    fontSize: 13,
-    color: '#94A3B8',
-    marginTop: 2,
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 3,
   },
   readOnlyField: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F1F5F9',
     padding: 16,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
   },
   readOnlyValue: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#64748B',
+    color: '#475569',
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     letterSpacing: 0.5,
   },
@@ -1316,17 +1550,21 @@ const styles = StyleSheet.create({
   placeholderCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
-    padding: 32,
+    padding: 28,
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#E2E8F0',
-    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 4,
   },
   placeholderIcon: {
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#ECFEFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
@@ -1334,14 +1572,14 @@ const styles = StyleSheet.create({
   placeholderTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#0F172A',
     marginBottom: 8,
   },
   placeholderDesc: {
     fontSize: 14,
-    color: '#64748B',
+    color: '#475569',
     textAlign: 'center',
-    marginBottom: 32,
+    marginBottom: 26,
     lineHeight: 20,
   },
   pickerButtons: {
@@ -1354,11 +1592,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.colors.primary,
+    backgroundColor: '#0F766E',
     paddingVertical: 14,
     borderRadius: 16,
     gap: 8,
-    shadowColor: theme.colors.primary,
+    shadowColor: '#0F766E',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -1376,13 +1614,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
     paddingVertical: 14,
     borderRadius: 16,
     gap: 8,
   },
   pickerBtnTextSecondary: {
-    color: '#475569',
+    color: '#334155',
     fontWeight: '700',
     fontSize: 14,
   },
@@ -1391,13 +1629,15 @@ const styles = StyleSheet.create({
     aspectRatio: 3/4,
     borderRadius: 24,
     overflow: 'hidden',
-    backgroundColor: '#000',
+    backgroundColor: '#0B1120',
     position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.28)',
   },
   previewImage: {
     width: '100%',
@@ -1407,11 +1647,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 16,
     left: 16,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(2,6,23,0.72)',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 8,
-    backdropFilter: 'blur(4px)',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
   },
   imageInfoText: {
     color: '#FFFFFF',
@@ -1425,38 +1666,42 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(2,6,23,0.72)',
     justifyContent: 'center',
     alignItems: 'center',
-    backdropFilter: 'blur(4px)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
   },
   imageBadge: {
     position: 'absolute',
     bottom: 16,
     left: 16,
-    backgroundColor: theme.colors.primary,
+    backgroundColor: 'rgba(15,23,42,0.78)',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(45,212,191,0.45)',
   },
   imageBadgeText: {
-    color: '#FFFFFF',
+    color: '#CCFBF1',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: 0.35,
   },
   analyzeButton: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: '#0F766E',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 18,
     borderRadius: 20,
     gap: 12,
-    shadowColor: theme.colors.primary,
+    shadowColor: '#0F766E',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOpacity: 0.32,
+    shadowRadius: 14,
+    elevation: 9,
   },
   analyzeButtonText: {
     color: '#FFFFFF',
@@ -1503,39 +1748,92 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 60,
-    paddingHorizontal: 24,
+    paddingTop: 56,
+    paddingHorizontal: 20,
   },
   closeButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(2,6,23,0.68)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: 'rgba(148,163,184,0.35)',
   },
   arBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 16,
+    backgroundColor: 'rgba(2,6,23,0.72)',
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 999,
     gap: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: 'rgba(45,212,191,0.55)',
   },
   arText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(2,6,23,0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(251,113,133,0.5)',
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#F87171',
+    marginRight: 6,
+  },
+  liveText: {
+    color: '#FCA5A5',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
   cameraControls: {
-    paddingBottom: 50,
+    paddingBottom: 46,
     alignItems: 'center',
-    gap: 32,
+    gap: 26,
+  },
+  cameraCategoryRow: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(2,6,23,0.72)',
+    borderRadius: 999,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.28)',
+    width: '86%',
+  },
+  cameraCategoryChip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  cameraCategoryChipActive: {
+    backgroundColor: '#0F766E',
+  },
+  cameraCategoryText: {
+    color: '#CBD5E1',
+    fontWeight: '700',
+    fontSize: 13,
+    letterSpacing: 0.3,
+  },
+  cameraCategoryTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   cameraToggleWrapper: {
     flexDirection: 'row',
@@ -1567,21 +1865,21 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 40,
     borderWidth: 5,
-    borderColor: 'rgba(255,255,255,0.3)',
+    borderColor: 'rgba(148,163,184,0.48)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(2,6,23,0.2)',
   },
   shutterInner: {
     width: 60,
     height: 60,
     borderRadius: 30,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
+    shadowColor: '#E2E8F0',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.65,
+    shadowRadius: 10,
+    elevation: 8,
   },
   guidelinesContainer: {
     position: 'absolute',
@@ -1593,22 +1891,60 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   viewFinder: {
-    width: width * 0.75,
-    height: height * 0.55,
+    width: SQUARE_FRAME_SIZE,
+    height: TRUNK_FRAME_HEIGHT,
     position: 'relative',
+    backgroundColor: 'rgba(2,6,23,0.16)',
   },
   latexViewFinder: {
-    width: width * 0.75,
-    height: width * 0.75,
+    width: SQUARE_FRAME_SIZE,
+    height: SQUARE_FRAME_SIZE,
     position: 'relative',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(2,6,23,0.16)',
+  },
+  scanFrameGlow: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(45,212,191,0.55)',
+    backgroundColor: 'rgba(15,118,110,0.1)',
+  },
+  scanSweepLine: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#5EEAD4',
+    shadowColor: '#5EEAD4',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  scanCenterDot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    backgroundColor: '#99F6E4',
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginTop: -6,
+    marginLeft: -6,
+    shadowColor: '#99F6E4',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 9,
+    elevation: 5,
   },
   corner: {
     position: 'absolute',
     width: 32,
     height: 32,
-    borderColor: '#FFFFFF',
+    borderColor: '#F8FAFC',
     borderWidth: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -1621,38 +1957,19 @@ const styles = StyleSheet.create({
   cornerBL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 12 },
   cornerBR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0, borderBottomRightRadius: 12 },
   guideInstruction: {
-    color: '#FFFFFF',
-    marginTop: 32,
-    fontSize: 16,
-    fontWeight: '600',
+    color: '#F8FAFC',
+    marginTop: 24,
+    fontSize: 14,
+    fontWeight: '700',
     textAlign: 'center',
     textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    paddingHorizontal: 16,
+    backgroundColor: 'rgba(2,6,23,0.62)',
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 12,
+    borderRadius: 999,
     overflow: 'hidden',
-  },
-  angleGuideContainer: {
-    position: 'absolute',
-    right: -40,
-    top: '50%',
-    alignItems: 'center',
-  },
-  angleLine: {
-    width: 50,
-    height: 3,
-    backgroundColor: '#FCD34D',
-    transform: [{ rotate: '-30deg' }],
-    borderRadius: 2,
-  },
-  angleText: {
-    color: '#FCD34D',
-    marginTop: 6,
-    fontSize: 12,
-    fontWeight: '800',
   },
   liquidLevelGuide: {
     width: '100%',
@@ -1770,7 +2087,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
     alignItems: 'center',
-    backdropFilter: 'blur(5px)',
   },
   loadingCard: {
     width: '80%',

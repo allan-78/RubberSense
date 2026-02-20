@@ -33,6 +33,169 @@ const withTimeout = (promise, ms, message) => {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 };
 
+const normalizeSeverity = (severity, fallback = 'unknown') => {
+  const value = String(severity || '').trim().toLowerCase();
+  if (!value) return fallback;
+
+  if (['none', 'healthy', 'no disease'].includes(value)) return 'none';
+  if (['low', 'mild'].includes(value)) return 'low';
+  if (['moderate', 'medium'].includes(value)) return 'moderate';
+  if (['high', 'severe'].includes(value)) return 'high';
+  if (value === 'critical') return 'critical';
+  if (['unknown', 'uncertain'].includes(value)) return 'unknown';
+
+  return fallback;
+};
+
+const readMixedText = (value) => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(readMixedText).filter(Boolean).join(' ');
+  }
+  if (typeof value === 'object') {
+    return Object.values(value).map(readMixedText).filter(Boolean).join(' ');
+  }
+  return '';
+};
+
+const aiDiagnosisSaysHealthy = (aiDiagnosis) => {
+  const text = readMixedText(aiDiagnosis).toLowerCase();
+  if (!text) return false;
+
+  const explicitHealthyPattern =
+    /(no\s+(signs?|evidence)\s+of\s+(disease|infection)|no disease detected|disease[-\s]?free|appears healthy|tree is healthy)/i;
+  if (explicitHealthyPattern.test(text)) return true;
+
+  const hasHealthyWord = /\bhealthy\b/i.test(text);
+  const hasDiseaseWord =
+    /\b(diseased?|infection|infected|blight|mildew|rot|canker|fungal?|lesion|necrosis|rust|pustule)\b/i.test(text);
+
+  return hasHealthyWord && !hasDiseaseWord;
+};
+
+const nameSuggestsHealthy = (name) => {
+  const value = String(name || '').toLowerCase();
+  return /(healthy|no disease|disease[-\s]?free|normal)/i.test(value);
+};
+
+const nameSuggestsDisease = (name) => {
+  const value = String(name || '').toLowerCase();
+  if (!value) return false;
+  if (nameSuggestsHealthy(value)) return false;
+  return /(disease|blight|spot|mildew|rot|canker|mold|fung|infect|lesion|necrosis|rust|pustule)/i.test(value);
+};
+
+const normalizeDiseaseDetection = (diseaseDetection = []) => {
+  const input = Array.isArray(diseaseDetection) ? diseaseDetection : [];
+  return input.map((disease) => {
+    const confidence = Number(disease?.confidence);
+    return {
+      name: String(disease?.name || 'Unknown').trim(),
+      confidence: Number.isFinite(confidence) ? confidence : 0,
+      severity: normalizeSeverity(disease?.severity, 'unknown'),
+      recommendation: readMixedText(disease?.recommendation).trim(),
+      ai_diagnosis: disease?.ai_diagnosis
+    };
+  });
+};
+
+const resolveHealthStatusFromDisease = (disease) => {
+  if (!disease) return 'unknown';
+
+  if (aiDiagnosisSaysHealthy(disease.ai_diagnosis)) return 'healthy';
+  if (disease.severity === 'none') return 'healthy';
+  if (nameSuggestsHealthy(disease.name)) return 'healthy';
+
+  if (['low', 'moderate', 'high', 'critical'].includes(disease.severity)) return 'diseased';
+  if (nameSuggestsDisease(disease.name)) return 'diseased';
+
+  return 'unknown';
+};
+
+const normalizeTreeAnalysisResult = (analysisResults = {}) => {
+  const normalizedDetection = normalizeDiseaseDetection(analysisResults.diseaseDetection);
+  const primaryDisease = normalizedDetection[0] || {
+    name: 'No disease detected',
+    confidence: 0,
+    severity: 'none',
+    recommendation: 'Tree appears healthy. Continue routine monitoring.',
+    ai_diagnosis: null
+  };
+
+  let resolvedHealthStatus = resolveHealthStatusFromDisease(primaryDisease);
+
+  if (resolvedHealthStatus === 'healthy') {
+    primaryDisease.name = nameSuggestsHealthy(primaryDisease.name) ? primaryDisease.name : 'No disease detected';
+    primaryDisease.severity = 'none';
+    if (!primaryDisease.recommendation) {
+      primaryDisease.recommendation = 'Tree appears healthy. Continue routine monitoring.';
+    }
+  } else if (resolvedHealthStatus === 'diseased' && primaryDisease.severity === 'none') {
+    primaryDisease.severity = 'moderate';
+  }
+
+  const diseaseDetection = [primaryDisease, ...normalizedDetection.slice(1)];
+
+  const leafAnalysis = analysisResults.leafAnalysis
+    ? { ...analysisResults.leafAnalysis }
+    : analysisResults.treeIdentification?.detectedPart === 'leaf'
+      ? {}
+      : analysisResults.leafAnalysis;
+
+  const trunkAnalysis = analysisResults.trunkAnalysis
+    ? { ...analysisResults.trunkAnalysis }
+    : analysisResults.treeIdentification?.detectedPart === 'trunk'
+      ? {}
+      : analysisResults.trunkAnalysis;
+
+  if (leafAnalysis && (analysisResults.treeIdentification?.detectedPart === 'leaf')) {
+    leafAnalysis.healthStatus = resolvedHealthStatus === 'unknown' ? (leafAnalysis.healthStatus || 'unknown') : resolvedHealthStatus;
+  }
+
+  if (trunkAnalysis && (analysisResults.treeIdentification?.detectedPart === 'trunk' || analysisResults.treeIdentification?.detectedPart === 'whole_tree')) {
+    trunkAnalysis.healthStatus = resolvedHealthStatus === 'unknown' ? (trunkAnalysis.healthStatus || 'unknown') : resolvedHealthStatus;
+    if (resolvedHealthStatus === 'healthy') {
+      trunkAnalysis.damages = [];
+    } else if (resolvedHealthStatus === 'diseased') {
+      trunkAnalysis.damages = [primaryDisease.name];
+    }
+  }
+
+  const tappabilityAssessment = analysisResults.tappabilityAssessment
+    ? { ...analysisResults.tappabilityAssessment }
+    : undefined;
+
+  if (tappabilityAssessment) {
+    if (resolvedHealthStatus === 'healthy' && typeof tappabilityAssessment.isTappable !== 'boolean') {
+      tappabilityAssessment.isTappable = true;
+    }
+    if (resolvedHealthStatus === 'diseased' && tappabilityAssessment.isTappable === true) {
+      tappabilityAssessment.isTappable = false;
+    }
+  }
+
+  const productivityRecommendation = analysisResults.productivityRecommendation
+    ? { ...analysisResults.productivityRecommendation }
+    : undefined;
+
+  if (productivityRecommendation && resolvedHealthStatus !== 'unknown') {
+    productivityRecommendation.status = resolvedHealthStatus === 'healthy' ? 'optimal' : (productivityRecommendation.status || 'at_risk');
+  }
+
+  return {
+    ...analysisResults,
+    diseaseDetection,
+    leafAnalysis,
+    trunkAnalysis,
+    tappabilityAssessment,
+    productivityRecommendation,
+    resolvedHealthStatus
+  };
+};
+
 // ============================================
 // @route   POST /api/scans/upload
 // @desc    Upload and analyze tree image
@@ -89,6 +252,7 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
           analysisResults = await analyzeLatexImage(localFilePath);
         } else {
           analysisResults = await analyzeTreeImage(localFilePath, scanSubType);
+          analysisResults = normalizeTreeAnalysisResult(analysisResults);
         }
     } catch (err) {
         console.error("AI Analysis Failed:", err);
@@ -111,9 +275,10 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
 
     // 2. Upload to Cloudinary (for permanent storage)
     // If this fails, we could optionally return the result anyway, but for now strict consistency
+    // Increased timeout to 60s for slow connections
     const uploadResult = await withTimeout(
       uploadToCloudinary(req.file, 'rubbersense/scans'),
-      20000,
+      60000,
       'Cloudinary upload timed out'
     );
 
@@ -127,7 +292,7 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
              
              const processedUpload = await withTimeout(
                  uploadToCloudinary(processedFile, 'rubbersense/processed'),
-                 15000,
+                 45000,
                  'Processed image upload timed out'
              );
              processedImageURL = processedUpload.url;
@@ -155,13 +320,7 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
 
     // Ensure diseaseDetection is an array and has valid structure
     const validDiseaseDetection = Array.isArray(diseaseDetection) 
-      ? diseaseDetection.map(d => ({
-          name: d.name || 'Unknown',
-          confidence: d.confidence || 0,
-          severity: d.severity || 'low',
-          recommendation: d.recommendation || '',
-          ai_diagnosis: d.ai_diagnosis
-        }))
+      ? normalizeDiseaseDetection(diseaseDetection)
       : [];
 
     // Create scan record
@@ -196,17 +355,27 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
     });
 
     // Update tree with scan results
-    await Tree.findByIdAndUpdate(treeId, {
-      healthStatus: validDiseaseDetection[0]?.name === 'No disease detected' ? 'healthy' : 'diseased',
+    const primaryDisease = validDiseaseDetection[0];
+    const nextHealthStatus = analysisResults.resolvedHealthStatus && analysisResults.resolvedHealthStatus !== 'unknown'
+      ? analysisResults.resolvedHealthStatus
+      : primaryDisease
+      ? resolveHealthStatusFromDisease(primaryDisease)
+      : tree.healthStatus;
+
+    const treeUpdatePayload = {
+      healthStatus: nextHealthStatus,
       isTappable: tappabilityAssessment?.isTappable || false,
       tappabilityScore: tappabilityAssessment?.score || 0,
-      trunkGirth: trunkAnalysis?.girth || 0,
-      trunkDiameter: trunkAnalysis?.diameter || 0,
-      barkTexture: trunkAnalysis?.texture || 'unknown',
-      barkColor: trunkAnalysis?.color || 'unknown',
       lastScannedAt: Date.now(),
       $inc: { totalScans: 1 }
-    });
+    };
+
+    // Keep trunk descriptors if present, but do not force/update girth values.
+    if (trunkAnalysis?.texture) treeUpdatePayload.barkTexture = trunkAnalysis.texture;
+    if (trunkAnalysis?.color) treeUpdatePayload.barkColor = trunkAnalysis.color;
+    if (typeof trunkAnalysis?.diameter === 'number') treeUpdatePayload.trunkDiameter = trunkAnalysis.diameter;
+
+    await Tree.findByIdAndUpdate(treeId, treeUpdatePayload);
 
     // Populate tree details before sending response
     await scan.populate('tree', 'treeID healthStatus');
@@ -396,6 +565,10 @@ router.post('/:id/analyze', protect, async (req, res) => {
         return res.status(400).json({ success: false, error: analysisResults.error });
     }
 
+    if (!isLatex) {
+      analysisResults = normalizeTreeAnalysisResult(analysisResults);
+    }
+
     // Update scan with new insights
     scan.aiInsights = {
         ...analysisResults.aiInsights,
@@ -405,15 +578,13 @@ router.post('/:id/analyze', protect, async (req, res) => {
 
     // Refresh other analysis fields
     if (analysisResults.diseaseDetection) {
-        scan.diseaseDetection = analysisResults.diseaseDetection.map(d => ({
-          name: d.name || 'Unknown',
-          confidence: d.confidence || 0,
-          severity: d.severity || 'low',
-          recommendation: d.recommendation || '',
-          ai_diagnosis: d.ai_diagnosis
-        }));
+        scan.diseaseDetection = normalizeDiseaseDetection(analysisResults.diseaseDetection);
     }
-    
+
+    if (analysisResults.leafAnalysis) {
+        scan.leafAnalysis = analysisResults.leafAnalysis;
+    }
+
     if (analysisResults.productivityRecommendation) {
         scan.productivityRecommendation = analysisResults.productivityRecommendation;
     }
@@ -432,6 +603,32 @@ router.post('/:id/analyze', protect, async (req, res) => {
             ...scan.treeIdentification,
             ...analysisResults.treeIdentification
         };
+    }
+
+    if (!isLatex && scan.tree) {
+        const updatedPrimaryDisease = scan.diseaseDetection?.[0];
+        const resolvedHealthStatus = analysisResults.resolvedHealthStatus && analysisResults.resolvedHealthStatus !== 'unknown'
+          ? analysisResults.resolvedHealthStatus
+          : resolveHealthStatusFromDisease(updatedPrimaryDisease);
+
+        const treeUpdatePayload = {
+          lastScannedAt: Date.now()
+        };
+
+        if (resolvedHealthStatus && resolvedHealthStatus !== 'unknown') {
+          treeUpdatePayload.healthStatus = resolvedHealthStatus;
+        }
+
+        if (analysisResults.tappabilityAssessment) {
+          treeUpdatePayload.isTappable = analysisResults.tappabilityAssessment.isTappable || false;
+          treeUpdatePayload.tappabilityScore = analysisResults.tappabilityAssessment.score || 0;
+        }
+
+        if (analysisResults.trunkAnalysis?.texture) treeUpdatePayload.barkTexture = analysisResults.trunkAnalysis.texture;
+        if (analysisResults.trunkAnalysis?.color) treeUpdatePayload.barkColor = analysisResults.trunkAnalysis.color;
+        if (typeof analysisResults.trunkAnalysis?.diameter === 'number') treeUpdatePayload.trunkDiameter = analysisResults.trunkAnalysis.diameter;
+
+        await Tree.findByIdAndUpdate(scan.tree, treeUpdatePayload);
     }
     
     // Save changes

@@ -17,6 +17,7 @@ import { MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import theme from '../styles/theme';
 import { marketAPI } from '../services/api';
 import { useNotification } from '../context/NotificationContext';
+import { useAppRefresh } from '../context/AppRefreshContext';
 
 // High-contrast color scheme
 const DARK_BG = '#1a1a1a';
@@ -26,9 +27,27 @@ const ACCENT_NEUTRAL = '#ffa502';
 const TEXT_PRIMARY = '#ffffff';
 const TEXT_SECONDARY = '#a0a0a0';
 const CARD_BG = '#2d2d2d';
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const CHART_SIDE_PADDING = 40;
+const MAX_ANALYSIS_LENGTH = 260;
+const MAX_RECOMMENDATION_LENGTH = 140;
+
+const normalizeText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim();
+const truncateText = (value = '', max = 200) => {
+  const cleaned = normalizeText(value);
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, max - 3).trim()}...`;
+};
+
+const compressLabels = (labels = [], maxVisible = 6) => {
+  if (!Array.isArray(labels) || labels.length <= maxVisible) return labels;
+  const step = Math.ceil(labels.length / maxVisible);
+  return labels.map((label, idx) => (idx % step === 0 || idx === labels.length - 1 ? label : ''));
+};
 
 const MarketScreen = ({ navigation }) => {
   const { settings, toggleSetting } = useNotification();
+  const { refreshTick } = useAppRefresh();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [chartPeriod, setChartPeriod] = useState('1W'); // '1W' or '1Y'
@@ -37,7 +56,9 @@ const MarketScreen = ({ navigation }) => {
     priceChange: 0,
     lastUpdated: '',
     dailyHistory: [],
+    dailyLabels: [],
     monthlyHistory: [],
+    monthlyLabels: [],
     trend: 'NEUTRAL',
     confidence: 0,
     nextWeekPrice: 0,
@@ -56,13 +77,17 @@ const MarketScreen = ({ navigation }) => {
           priceChange: data.priceChange || 0,
           lastUpdated: data.timestamp || new Date().toISOString(),
           dailyHistory: data.dailyHistory || [],
+          dailyLabels: data.dailyLabels || [],
           monthlyHistory: data.monthlyHistory || [],
+          monthlyLabels: data.monthlyLabels || [],
           trend: data.trend || 'NEUTRAL',
           confidence: data.confidence || 0,
           nextWeekPrice: data.nextWeekProjection || 0,
           features: data.features || [],
-          analysis: data.analysis || '',
-          recommendations: data.recommendations || []
+          analysis: truncateText(data.analysis || '', MAX_ANALYSIS_LENGTH),
+          recommendations: (Array.isArray(data.recommendations) ? data.recommendations : [])
+            .slice(0, 6)
+            .map((rec) => truncateText(rec || '', MAX_RECOMMENDATION_LENGTH))
         });
       }
     } catch (error) {
@@ -90,6 +115,11 @@ const MarketScreen = ({ navigation }) => {
     fetchMarketData(true); // Force refresh
   }, []);
 
+  useEffect(() => {
+    if (refreshTick === 0) return;
+    fetchMarketData(false);
+  }, [refreshTick]);
+
   const chartConfig = {
     backgroundGradientFrom: CARD_BG,
     backgroundGradientTo: CARD_BG,
@@ -103,6 +133,9 @@ const MarketScreen = ({ navigation }) => {
       r: "4",
       strokeWidth: "2",
       stroke: ACCENT_GAIN
+    },
+    propsForLabels: {
+      fontSize: 10
     }
   };
 
@@ -116,24 +149,50 @@ const MarketScreen = ({ navigation }) => {
   }
 
   const getChartData = () => {
-    if (chartPeriod === '1W') {
+    const defaultWeekLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const normalizeSeries = (values, labels, fallbackLabels) => {
+      const safeValues = Array.isArray(values) && values.length > 0 ? values : [0];
+      let safeLabels = Array.isArray(labels) && labels.length > 0 ? labels : fallbackLabels;
+
+      if (safeLabels.length !== safeValues.length) {
+        if (safeLabels.length > safeValues.length) {
+          safeLabels = safeLabels.slice(safeLabels.length - safeValues.length);
+        } else {
+          const base = safeLabels.length > 0 ? safeLabels[0] : fallbackLabels[0];
+          safeLabels = [...Array(safeValues.length - safeLabels.length).fill(base), ...safeLabels];
+        }
+      }
+
       return {
-        labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        datasets: [{ data: marketData.dailyHistory && marketData.dailyHistory.length > 0 ? marketData.dailyHistory : [0,0,0,0,0,0,0] }]
+        labels: safeLabels,
+        datasets: [{ data: safeValues }]
       };
+    };
+
+    if (chartPeriod === '1W') {
+      const weeklyValues = marketData.dailyHistory && marketData.dailyHistory.length > 0
+        ? marketData.dailyHistory
+        : [0, 0, 0, 0, 0, 0, 0];
+      return normalizeSeries(weeklyValues, marketData.dailyLabels, defaultWeekLabels);
     } else {
-      // 1 Year (Monthly) - simplified labels
-      const months = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
       const history = marketData.monthlyHistory || [];
-      // Take last 12 points for cleaner mobile view or downsample
       const displayData = history.length > 12 ? history.slice(-12) : (history.length > 0 ? history : [0]);
-      
+      const labels = marketData.monthlyLabels || [];
+      const displayLabels = labels.length > 12 ? labels.slice(-12) : labels;
+      const normalized = normalizeSeries(displayData, displayLabels, ["Jan"]);
       return {
-        labels: months,
-        datasets: [{ data: displayData }]
+        ...normalized,
+        labels: compressLabels(normalized.labels, 6)
       };
     }
   };
+
+  const trendText = marketData.trend === 'RISE' ? 'BULLISH' : marketData.trend === 'FALL' ? 'BEARISH' : 'SIDEWAYS';
+  const trendColor = marketData.trend === 'RISE' ? ACCENT_GAIN : marketData.trend === 'FALL' ? ACCENT_LOSS : ACCENT_NEUTRAL;
+  const chartData = getChartData();
+  const dynamicChartWidth = chartPeriod === '1Y'
+    ? Math.max(SCREEN_WIDTH - CHART_SIDE_PADDING, chartData.labels.length * 54)
+    : SCREEN_WIDTH - CHART_SIDE_PADDING;
 
   return (
     <View style={styles.container}>
@@ -214,15 +273,18 @@ const MarketScreen = ({ navigation }) => {
              </View>
           </View>
           
-          <LineChart
-            data={getChartData()}
-            width={Dimensions.get("window").width - 40}
-            height={220}
-            yAxisLabel="₱"
-            chartConfig={chartConfig}
-            bezier
-            style={styles.chart}
-          />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <LineChart
+              data={chartData}
+              width={dynamicChartWidth}
+              height={220}
+              yAxisLabel="₱"
+              chartConfig={chartConfig}
+              bezier
+              verticalLabelRotation={chartPeriod === '1Y' ? 30 : 0}
+              style={styles.chart}
+            />
+          </ScrollView>
         </View>
 
         {/* Future Prediction Card */}
@@ -242,16 +304,16 @@ const MarketScreen = ({ navigation }) => {
               <View style={styles.predictionStats}>
                  <View style={styles.statItem}>
                     <Text style={styles.statLabel}>Next Week Projection</Text>
-                    <Text style={styles.statValue}>₱{marketData.nextWeekPrice}</Text>
+                    <Text style={styles.statValue}>₱{Number(marketData.nextWeekPrice || 0).toFixed(2)}</Text>
                  </View>
                  <View style={styles.separator} />
                  <View style={styles.statItem}>
                     <Text style={styles.statLabel}>Market Sentiment</Text>
                     <Text style={[
                       styles.statValue, 
-                      { color: marketData.trend === 'RISE' ? ACCENT_GAIN : ACCENT_LOSS }
+                      { color: trendColor }
                     ]}>
-                      {marketData.trend === 'RISE' ? 'BULLISH' : 'BEARISH'}
+                      {trendText}
                     </Text>
                  </View>
               </View>
@@ -566,3 +628,5 @@ const styles = StyleSheet.create({
 });
 
 export default MarketScreen;
+
+

@@ -13,6 +13,60 @@ const { uploadToCloudinary } = require('../config/cloudinary');
 const { analyzeLatexImage } = require('../utils/imageAnalysis');
 const { estimateLatexPrice } = require('../utils/marketPrice');
 
+const normalizeTextList = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, val]) => `${key}: ${String(val || '').trim()}`.trim())
+      .filter(Boolean);
+  }
+  const text = String(value).trim();
+  return text ? [text] : [];
+};
+
+const normalizeLatexRecommendation = (analysisResults) => {
+  const recommendation = analysisResults.productRecommendation || {};
+  const aiSuggestions = normalizeTextList(analysisResults.aiInsights?.suggestions);
+  const recommendedUses = normalizeTextList(recommendation.recommendedUses);
+
+  const expectedQuality = recommendation.expectedQuality
+    || (analysisResults.qualityClassification?.grade ? `Grade ${analysisResults.qualityClassification.grade}` : 'N/A');
+
+  const recommendedProduct = String(
+    recommendation.recommendedProduct
+    || analysisResults.productYieldEstimation?.productType
+    || 'AI recommendation unavailable'
+  ).trim();
+
+  const reason = String(
+    recommendation.reason
+    || aiSuggestions[0]
+    || 'AI recommendation unavailable. Please re-analyze when service is available.'
+  ).trim();
+
+  const marketValueInsight = String(
+    recommendation.marketValueInsight
+    || aiSuggestions[1]
+    || 'AI market insight unavailable.'
+  ).trim();
+
+  const preservation = String(
+    recommendation.preservation
+    || aiSuggestions[2]
+    || 'AI preservation advice unavailable.'
+  ).trim();
+
+  return {
+    recommendedProduct,
+    reason,
+    expectedQuality,
+    recommendedUses: recommendedUses.slice(0, 8),
+    marketValueInsight,
+    preservation
+  };
+};
+
 // ============================================
 // @route   POST /api/latex/batch
 // @desc    Create latex batch with analysis
@@ -82,6 +136,20 @@ router.post('/batch', protect, (req, res, next) => {
 
     // Analyze latex image
     const analysisResults = await analyzeLatexImage(uploadResult.url);
+
+    // Strict category validation: latex scanner must only accept latex content.
+    if (
+      analysisResults.error &&
+      String(analysisResults.error).toLowerCase().includes('detected part non-latex only')
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: analysisResults.error,
+        details: analysisResults
+      });
+    }
+
+    analysisResults.productRecommendation = normalizeLatexRecommendation(analysisResults);
 
     // Handle user inputs for Volume and Dry Weight (Override AI estimation if provided)
     // Trim and sanitize inputs
@@ -178,7 +246,7 @@ router.post('/batch', protect, (req, res, next) => {
       contaminationDetection: analysisResults.contaminationDetection,
       quantityEstimation: analysisResults.quantityEstimation,
       productYieldEstimation: analysisResults.productYieldEstimation,
-      productRecommendation: analysisResults.productRecommendation,
+      productRecommendation: normalizeLatexRecommendation(analysisResults),
       marketPriceEstimation: priceEstimation,
       aiInsights: analysisResults.aiInsights,
       processingStatus: processingStatus,
@@ -240,6 +308,8 @@ router.post('/:id/analyze', protect, async (req, res) => {
         });
     }
 
+    analysisResults.productRecommendation = normalizeLatexRecommendation(analysisResults);
+
     // Preserve User Inputs (Volume/DRC) if they were set with high confidence (User Input)
     // or simply if they exist, because AI currently returns 0 for volume.
     // We assume if volume > 0, it was user input or valid estimation.
@@ -296,7 +366,7 @@ router.post('/:id/analyze', protect, async (req, res) => {
     batch.contaminationDetection = analysisResults.contaminationDetection;
     batch.quantityEstimation = analysisResults.quantityEstimation;
     batch.productYieldEstimation = analysisResults.productYieldEstimation;
-    batch.productRecommendation = analysisResults.productRecommendation;
+    batch.productRecommendation = normalizeLatexRecommendation(analysisResults);
     batch.marketPriceEstimation = priceEstimation;
     batch.aiInsights = analysisResults.aiInsights;
     batch.processingStatus = 'completed';

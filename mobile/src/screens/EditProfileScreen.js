@@ -15,6 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
+import { useAppRefresh } from '../context/AppRefreshContext';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 
@@ -34,6 +35,7 @@ const COLORS = {
 const EditProfileScreen = () => {
   const navigation = useNavigation();
   const { user, updateProfile } = useAuth();
+  const { refreshAllPages } = useAppRefresh();
 
   // Form State
   const [name, setName] = useState(user?.name || '');
@@ -164,6 +166,7 @@ const EditProfileScreen = () => {
       console.log('📡 [EditProfile] Response:', result);
       
       if (result.success) {
+        refreshAllPages('profile_updated');
         Alert.alert('Success', 'Profile updated successfully', [
           { text: 'OK', onPress: () => navigation.goBack() }
         ]);
@@ -176,17 +179,6 @@ const EditProfileScreen = () => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleDeactivate = () => {
-    Alert.alert(
-      'Deactivate Account',
-      'Are you sure you want to deactivate or delete your account? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Deactivate', style: 'destructive', onPress: () => console.log('Deactivate') }
-      ]
-    );
   };
 
   const displayImage = selectedImage || user?.profileImage || `https://ui-avatars.com/api/?name=${name.replace(' ', '+')}&background=556B2F&color=fff&size=200`;
@@ -322,11 +314,6 @@ const EditProfileScreen = () => {
           </View>
           <Text style={styles.helperText}>Brief description for your profile.</Text>
         </View>
-
-        {/* Deactivate Account */}
-        <TouchableOpacity style={styles.deactivateButton} onPress={handleDeactivate}>
-          <Text style={styles.deactivateText}>Deactivate or Delete Account</Text>
-        </TouchableOpacity>
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -494,17 +481,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text,
     minHeight: 80,
-  },
-
-  // Deactivate
-  deactivateButton: {
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  deactivateText: {
-    color: '#EF4444',
-    fontSize: 13,
-    fontWeight: '500',
   },
 });
 

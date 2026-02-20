@@ -33,10 +33,13 @@ router.post('/register', async (req, res) => {
     console.log(`⏱️ [PERF] User check took: ${Date.now() - start}ms`);
 
     if (userExists) {
+      const message = userExists.isActive === false
+        ? 'This account is deactivated. Please contact support.'
+        : 'Email is already registered';
       console.log('⚠️ [REGISTER] User already exists:', email);
       return res.status(400).json({
         success: false,
-        error: 'Email is already registered'
+        error: message
       });
     }
 
@@ -94,6 +97,8 @@ router.post('/register', async (req, res) => {
           profileImage: user.profileImage,
           followers: user.followers,
           following: user.following,
+          blockedUsers: user.blockedUsers,
+          isActive: user.isActive,
           createdAt: user.createdAt
         }
       }
@@ -150,6 +155,13 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'This account is deactivated'
+      });
+    }
+
     // Check password
     const isMatch = await user.comparePassword(password);
 
@@ -188,6 +200,8 @@ router.post('/login', async (req, res) => {
           profileImage: user.profileImage,
           followers: user.followers,
           following: user.following,
+          blockedUsers: user.blockedUsers,
+          isActive: user.isActive,
           createdAt: user.createdAt
         }
       }
@@ -350,6 +364,8 @@ router.get('/me', protect, async (req, res) => {
           profileImage: user.profileImage,
           followers: user.followers,
           following: user.following,
+          blockedUsers: user.blockedUsers,
+          isActive: user.isActive,
           followersCount: Array.isArray(user.followers) ? user.followers.length : 0,
           followingCount: Array.isArray(user.following) ? user.following.length : 0,
           followersIds: Array.isArray(user.followers) ? user.followers.map(u => u._id || u) : [],
@@ -403,6 +419,8 @@ router.post('/refresh', protect, async (req, res) => {
           profileImage: user.profileImage,
           followers: user.followers,
           following: user.following,
+          blockedUsers: user.blockedUsers,
+          isActive: user.isActive,
           followersCount: Array.isArray(user.followers) ? user.followers.length : 0,
           followingCount: Array.isArray(user.following) ? user.following.length : 0,
           followersIds: Array.isArray(user.followers) ? user.followers.map(u => u._id || u) : [],
@@ -415,6 +433,142 @@ router.post('/refresh', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Server error refreshing token'
+    });
+  }
+});
+
+// ============================================
+// @route   PUT /api/auth/change-password
+// @desc    Change password for authenticated user
+// @access  Private
+// ============================================
+router.put('/change-password', protect, async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Current password, new password, and confirmation are required'
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'New password and confirmation do not match'
+      });
+    }
+
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'New password must be at least 6 characters'
+      });
+    }
+
+    const user = await User.findById(req.user.id).select('+password');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'This account is deactivated'
+      });
+    }
+
+    const isCurrentMatch = await user.comparePassword(currentPassword);
+    if (!isCurrentMatch) {
+      return res.status(400).json({
+        success: false,
+        error: 'Current password is incorrect'
+      });
+    }
+
+    const isSameAsOld = await user.comparePassword(newPassword);
+    if (isSameAsOld) {
+      return res.status(400).json({
+        success: false,
+        error: 'New password must be different from current password'
+      });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully'
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update password'
+    });
+  }
+});
+
+// ============================================
+// @route   PUT /api/auth/deactivate-account
+// @desc    Deactivate account for authenticated user
+// @access  Private
+// ============================================
+router.put('/deactivate-account', protect, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password is required to deactivate account'
+      });
+    }
+
+    const user = await User.findById(req.user.id).select('+password');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    if (user.isActive === false) {
+      return res.status(400).json({
+        success: false,
+        error: 'Account is already deactivated'
+      });
+    }
+
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        error: 'Password is incorrect'
+      });
+    }
+
+    user.isActive = false;
+    user.deactivatedAt = new Date();
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+    user.verificationToken = undefined;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Account deactivated successfully'
+    });
+  } catch (error) {
+    console.error('Deactivate account error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to deactivate account'
     });
   }
 });
@@ -431,6 +585,13 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'There is no user with that email'
+      });
+    }
+
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'This account is deactivated'
       });
     }
 
@@ -508,6 +669,13 @@ router.put('/reset-password/:resettoken', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Invalid token or token expired'
+      });
+    }
+
+    if (user.isActive === false) {
+      return res.status(403).json({
+        success: false,
+        error: 'This account is deactivated'
       });
     }
 

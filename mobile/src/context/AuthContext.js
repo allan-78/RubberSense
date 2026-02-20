@@ -5,6 +5,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authAPI, userAPI, API_URL } from '../services/api';
+import { disconnectSocket } from '../services/socket';
 
 const AuthContext = createContext(null);
 
@@ -123,6 +124,7 @@ export const AuthProvider = ({ children }) => {
         } catch (e) {
           await AsyncStorage.removeItem('token');
           await AsyncStorage.removeItem('user');
+          disconnectSocket();
           setUser(null);
         }
       } else if (userData) {
@@ -227,6 +229,7 @@ export const AuthProvider = ({ children }) => {
       await AsyncStorage.removeItem('hasSeenOnboarding');
       setHasSeenOnboarding(false);
       
+      disconnectSocket();
       setUser(null);
     } catch (error) {
       console.log('Logout error:', error);
@@ -284,6 +287,39 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const changePassword = async ({ currentPassword, newPassword, confirmPassword }) => {
+    try {
+      const response = await authAPI.changePassword({ currentPassword, newPassword, confirmPassword });
+      return {
+        success: true,
+        message: response?.message || 'Password updated successfully',
+      };
+    } catch (error) {
+      const errorMessage = error?.error || error?.message || 'Failed to update password';
+      return {
+        success: false,
+        error: errorMessage,
+      };
+    }
+  };
+
+  const deactivateAccount = async ({ password }) => {
+    try {
+      const response = await authAPI.deactivateAccount({ password });
+      await logout();
+      return {
+        success: true,
+        message: response?.message || 'Account deactivated successfully',
+      };
+    } catch (error) {
+      const errorMessage = error?.error || error?.message || 'Failed to deactivate account';
+      return {
+        success: false,
+        error: errorMessage,
+      };
+    }
+  };
+
   const value = {
     user,
     loading,
@@ -299,6 +335,8 @@ export const AuthProvider = ({ children }) => {
     completeOnboarding,
     resetOnboarding,
     forgotPassword,
+    changePassword,
+    deactivateAccount,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

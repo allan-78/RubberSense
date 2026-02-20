@@ -2,7 +2,7 @@
 // 📱 Scan Detail Screen
 // ============================================
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -17,16 +17,62 @@ import {
 import { MaterialIcons, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import theme from '../styles/theme';
-import { scanAPI } from '../services/api';
+import { API_URL, scanAPI } from '../services/api';
 
 const { width } = Dimensions.get('window');
 
 const ScanDetailScreen = ({ route, navigation }) => {
   const [currentScan, setCurrentScan] = useState(route.params.scan);
   const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
   
   // Use currentScan for rendering to support updates
   const scan = currentScan;
+
+  const resolveScanImageUri = (scanData) => {
+    const candidates = [
+      scanData?.imageURL,
+      scanData?.imageUrl,
+      scanData?.image,
+      scanData?.photoURL,
+      scanData?.photoUrl,
+      scanData?.fileUrl,
+      scanData?.media?.url,
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+      const normalizedCandidate =
+        typeof candidate === 'string'
+          ? candidate
+          : (candidate?.uri || candidate?.url || '');
+
+      const raw = String(normalizedCandidate).trim();
+      if (!raw) continue;
+      if (raw === '[object Object]') continue;
+
+      const clean = raw.replace(/\\/g, '/');
+
+      if (/^(https?:\/\/|file:\/\/|content:\/\/|data:image\/)/i.test(clean)) {
+        return clean;
+      }
+
+      if (clean.startsWith('//')) {
+        return `https:${clean}`;
+      }
+
+      const base = API_URL.replace(/\/+$/, '');
+      const path = clean.startsWith('/') ? clean : `/${clean}`;
+      return `${base}${path}`;
+    }
+
+    return null;
+  };
+
+  const scanImageUri = useMemo(() => resolveScanImageUri(scan), [scan]);
+
+  useEffect(() => {
+    setImageLoadFailed(false);
+  }, [scanImageUri]);
 
   const handleReanalyze = async () => {
     if (!currentScan?._id) {
@@ -40,7 +86,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
         const res = await scanAPI.reanalyze(currentScan._id);
         if (res.success && res.data) {
             setCurrentScan(res.data);
-            Alert.alert("Success", "Scan re-analyzed successfully with latest AI models.");
+            Alert.alert("Success", "Scan re-analyzed successfully with latest models.");
         }
     } catch (error) {
         console.error("❌ Re-analysis failed:", error);
@@ -72,7 +118,51 @@ const ScanDetailScreen = ({ route, navigation }) => {
     }
   };
 
+  const aiDiagnosisSaysHealthy = (aiDiagnosis) => {
+    const toText = (value) => {
+      if (!value) return '';
+      if (Array.isArray(value)) return value.map(toText).join(' ');
+      if (typeof value === 'object') return Object.values(value).map(toText).join(' ');
+      return String(value);
+    };
+
+    const text = toText(aiDiagnosis).toLowerCase();
+    if (!text) return false;
+    if (
+      /no\s+(signs?|evidence)\s+of\s+(disease|infection)|no disease detected|disease[-\s]?free|appears healthy|tree is healthy/.test(text)
+    ) {
+      return true;
+    }
+    const hasHealthy = /\bhealthy\b/.test(text);
+    const hasDisease = /\b(diseased?|infection|infected|blight|mildew|rot|canker|fungal?|lesion|necrosis|rust|pustule)\b/.test(text);
+    return hasHealthy && !hasDisease;
+  };
+
+  const normalizeDiseaseForDisplay = (disease) => {
+    if (!disease) return disease;
+    if (!aiDiagnosisSaysHealthy(disease.ai_diagnosis)) return disease;
+
+    const currentName = String(disease.name || '');
+    const isAlreadyHealthy = /healthy|no disease/i.test(currentName);
+
+    return {
+      ...disease,
+      name: isAlreadyHealthy ? currentName : 'No disease detected',
+      severity: 'none',
+      recommendation: disease.recommendation || 'Tree appears healthy. Continue routine monitoring.'
+    };
+  };
+
   const getScanHealthStatus = (scan) => {
+    const normalizedPrimary = normalizeDiseaseForDisplay(scan.diseaseDetection?.[0]);
+    if (normalizedPrimary) {
+      const name = String(normalizedPrimary.name || '').toLowerCase();
+      const severity = String(normalizedPrimary.severity || '').toLowerCase();
+      if (severity === 'none' || /healthy|no disease/.test(name)) return 'healthy';
+      if (['low', 'moderate', 'medium', 'high', 'critical'].includes(severity)) return 'diseased';
+      if (/disease|blight|spot|mildew|rot|canker|mold|infect|lesion|necrosis|rust|pustule/.test(name)) return 'diseased';
+    }
+
     if (scan.treeIdentification?.detectedPart === 'leaf' && scan.leafAnalysis?.healthStatus) {
       return scan.leafAnalysis.healthStatus;
     }
@@ -80,6 +170,15 @@ const ScanDetailScreen = ({ route, navigation }) => {
       return scan.trunkAnalysis.healthStatus;
     }
     return scan.tree?.healthStatus || 'unknown';
+  };
+
+  const formatDetectedPart = (part, fallback = 'WHOLE TREE') => {
+    const normalized = String(part || '').toLowerCase();
+    if (normalized === 'trunk') return 'TRUNKS';
+    if (normalized === 'leaf') return 'LEAF';
+    if (normalized === 'latex') return 'LATEX';
+    if (normalized === 'whole_tree') return 'WHOLE TREE';
+    return fallback;
   };
 
   const InfoCard = ({ title, icon, children }) => (
@@ -110,11 +209,31 @@ const ScanDetailScreen = ({ route, navigation }) => {
 
   return (
     <View style={styles.container}>
+      <LinearGradient
+        colors={theme.gradients.light}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
         
         {/* Header Image */}
         <View style={styles.imageContainer}>
-          <Image source={{ uri: scan.imageURL }} style={styles.image} />
+          {scanImageUri && !imageLoadFailed ? (
+            <Image
+              source={{ uri: scanImageUri }}
+              style={styles.image}
+              onError={() => setImageLoadFailed(true)}
+            />
+          ) : (
+            <View style={styles.imageFallback}>
+              <MaterialIcons name="image-not-supported" size={36} color="#CBD5E1" />
+              <Text style={styles.imageFallbackTitle}>Scan Image Unavailable</Text>
+              <Text style={styles.imageFallbackSub}>
+                Capture a new sample to continue detailed analysis.
+              </Text>
+            </View>
+          )}
           <LinearGradient
             colors={['rgba(0,0,0,0.6)', 'transparent', 'rgba(0,0,0,0.3)']}
             style={styles.imageOverlay}
@@ -141,7 +260,9 @@ const ScanDetailScreen = ({ route, navigation }) => {
           </View>
 
           <View style={styles.headerInfo}>
-            <Text style={styles.treeTitle}>Tree {scan.tree?.treeID}</Text>
+            <Text style={styles.treeTitle}>
+              {scan.scanType === 'latex' ? 'Latex Scan' : `Tree ${scan.tree?.treeID || 'Unknown'}`}
+            </Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
               <MaterialIcons 
                 name={scan.treeIdentification?.detectedPart === 'leaf' ? 'eco' : (scan.treeIdentification?.detectedPart === 'trunk' ? 'straighten' : 'park')} 
@@ -150,7 +271,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                 style={{ marginRight: 6 }}
               />
               <Text style={{ color: '#DDD', fontSize: 14, fontWeight: '500' }}>
-                 {scan.treeIdentification?.detectedPart ? scan.treeIdentification.detectedPart.toUpperCase().replace('_', ' ') : "TREE SCAN"}
+                 {formatDetectedPart(scan.treeIdentification?.detectedPart, 'RUBBER SCAN')}
               </Text>
             </View>
             <Text style={styles.scanDate}>
@@ -160,8 +281,30 @@ const ScanDetailScreen = ({ route, navigation }) => {
         </View>
 
         <View style={styles.contentContainer}>
+          <View style={styles.quickStatsRow}>
+            <View style={styles.quickStatCard}>
+              <Text style={styles.quickStatLabel}>Detected Part</Text>
+              <Text style={styles.quickStatValue}>
+                {formatDetectedPart(scan.treeIdentification?.detectedPart)}
+              </Text>
+            </View>
+            <View style={styles.quickStatCard}>
+              <Text style={styles.quickStatLabel}>Confidence</Text>
+              <Text style={styles.quickStatValue}>
+                {typeof scan.treeIdentification?.confidence === 'number'
+                  ? `${Math.round(scan.treeIdentification.confidence)}%`
+                  : 'N/A'}
+              </Text>
+            </View>
+            <View style={styles.quickStatCard}>
+              <Text style={styles.quickStatLabel}>Diseases</Text>
+              <Text style={styles.quickStatValue}>
+                {Array.isArray(scan.diseaseDetection) ? scan.diseaseDetection.length : 0}
+              </Text>
+            </View>
+          </View>
           
-          {/* AI Re-analysis & Insights */}
+          {/* Re-analysis & Insights */}
           <View style={{ marginBottom: 20 }}>
              <TouchableOpacity 
                 style={styles.reanalyzeButton} 
@@ -173,15 +316,29 @@ const ScanDetailScreen = ({ route, navigation }) => {
                 ) : (
                     <>
                         <MaterialIcons name="refresh" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                        <Text style={styles.reanalyzeText}>Re-analyze with AI</Text>
+                        <Text style={styles.reanalyzeText}>Re-analyze Scan</Text>
                     </>
                 )}
              </TouchableOpacity>
           </View>
 
-          {/* AI Insights Card */}
+          {/* Insights Card */}
           {scan.aiInsights && (
-             <InfoCard title="AI Prompt Recommendations" icon="lightbulb">
+             <InfoCard title="Prompt Recommendations" icon="lightbulb">
+                {scan.aiInsights.overallReport && (
+                    <View style={{ marginBottom: 10 }}>
+                        <Text style={[styles.detailLabel, { marginBottom: 6 }]}>Overall Report:</Text>
+                        <Text style={styles.diseaseRec}>{scan.aiInsights.overallReport}</Text>
+                    </View>
+                )}
+
+                {scan.aiInsights.diagnosis && (
+                    <View style={{ marginBottom: 10 }}>
+                        <Text style={[styles.detailLabel, { marginBottom: 6 }]}>AI Diagnosis:</Text>
+                        <Text style={styles.diseaseRec}>{scan.aiInsights.diagnosis}</Text>
+                    </View>
+                )}
+
                 {scan.aiInsights.promptRecommendations?.length > 0 && (
                     <>
                         <Text style={[styles.detailLabel, { marginBottom: 8 }]}>Suggested Questions:</Text>
@@ -200,7 +357,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                 
                 {scan.aiInsights.suggestions?.length > 0 && (
                     <View style={{ marginTop: 12 }}>
-                        <Text style={[styles.detailLabel, { marginBottom: 8 }]}>AI Suggestions:</Text>
+                        <Text style={[styles.detailLabel, { marginBottom: 8 }]}>Suggestions:</Text>
                         {scan.aiInsights.suggestions.map((suggestion, index) => (
                              <View key={index} style={styles.bulletPoint}>
                                 <MaterialIcons name="auto-awesome" size={16} color={theme.colors.secondary} />
@@ -224,7 +381,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
             />
             <DetailRow 
               label="Detected Part" 
-              value={scan.treeIdentification?.detectedPart ? scan.treeIdentification.detectedPart.toUpperCase().replace('_', ' ') : "WHOLE TREE"} 
+              value={formatDetectedPart(scan.treeIdentification?.detectedPart)} 
             />
             <DetailRow 
               label="Maturity" 
@@ -242,7 +399,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
             <InfoCard title="Leaf Analysis" icon="eco">
               <DetailRow 
                 label="Health Status" 
-                value={scan.leafAnalysis?.healthStatus?.toUpperCase()} 
+                value={getScanHealthStatus(scan)?.toUpperCase()} 
               />
               <DetailRow 
                 label="Color" 
@@ -263,8 +420,10 @@ const ScanDetailScreen = ({ route, navigation }) => {
           {/* 3. Trunk Analysis (Conditional) */}
           {(scan.treeIdentification?.detectedPart === 'trunk' || scan.treeIdentification?.detectedPart === 'whole_tree' || !scan.treeIdentification?.detectedPart) && (
             <InfoCard title="Trunk Analysis" icon="straighten">
-              <DetailRow label="Girth" value={`${scan.trunkAnalysis?.girth} cm`} />
-              <DetailRow label="Diameter" value={`${scan.trunkAnalysis?.diameter} cm`} />
+              <DetailRow 
+                label="Detected Disease" 
+                value={normalizeDiseaseForDisplay(scan.diseaseDetection?.[0])?.name || 'No disease detected'} 
+              />
               <DetailRow label="Bark Texture" value={scan.trunkAnalysis?.texture} />
               <DetailRow label="Bark Color" value={scan.trunkAnalysis?.color} isLast />
             </InfoCard>
@@ -273,7 +432,9 @@ const ScanDetailScreen = ({ route, navigation }) => {
           {/* 3. Disease Detection */}
           <InfoCard title="Disease Detection" icon="healing">
             {scan.diseaseDetection && scan.diseaseDetection.length > 0 ? (
-              scan.diseaseDetection.map((disease, index) => (
+              scan.diseaseDetection.map((rawDisease, index) => {
+                const disease = normalizeDiseaseForDisplay(rawDisease);
+                return (
                 <View key={index} style={styles.diseaseItem}>
                   <View style={styles.diseaseHeader}>
                     <View>
@@ -291,10 +452,10 @@ const ScanDetailScreen = ({ route, navigation }) => {
                     </View>
                   </View>
                   
-                  {/* AI Diagnosis Section */}
+                  {/* Expert Diagnosis Section */}
                   {disease.ai_diagnosis && (
                     <View style={{ marginBottom: 10, marginTop: 5, padding: 10, backgroundColor: '#f0f9ff', borderRadius: 8 }}>
-                        <Text style={[styles.diseaseRecTitle, { color: theme.colors.primary, marginBottom: 5 }]}>AI Expert Diagnosis:</Text>
+                        <Text style={[styles.diseaseRecTitle, { color: theme.colors.primary, marginBottom: 5 }]}>Expert Diagnosis:</Text>
                         {typeof disease.ai_diagnosis === 'object' ? (
                             <View>
                                 {disease.ai_diagnosis.diagnosis && (
@@ -361,7 +522,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                   <Text style={styles.diseaseRecTitle}>Recommendation:</Text>
                   <Text style={styles.diseaseRec}>{disease.recommendation}</Text>
                 </View>
-              ))
+              )})
             ) : (
               <Text style={styles.noDataText}>No diseases detected.</Text>
             )}
@@ -453,9 +614,9 @@ const ScanDetailScreen = ({ route, navigation }) => {
             </InfoCard>
           )}
 
-           {/* AI Insights (Persisted) */}
+           {/* Insights (Persisted) */}
            {scan.aiInsights && (
-             <InfoCard title="AI Insights" icon="psychology">
+             <InfoCard title="Insights" icon="psychology">
                  {scan.aiInsights.suggestions && scan.aiInsights.suggestions.length > 0 && (
                      <View style={{ marginBottom: 15 }}>
                          <Text style={styles.detailLabel}>Suggestions:</Text>
@@ -470,7 +631,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                  
                  {scan.aiInsights.promptRecommendations && scan.aiInsights.promptRecommendations.length > 0 && (
                      <View>
-                         <Text style={styles.detailLabel}>Ask AI Assistant:</Text>
+                         <Text style={styles.detailLabel}>Ask Assistant:</Text>
                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 5 }}>
                              {scan.aiInsights.promptRecommendations.map((p, i) => (
                                  <View key={i} style={{ 
@@ -517,10 +678,10 @@ const ScanDetailScreen = ({ route, navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: '#F8FAFC',
   },
   imageContainer: {
-    height: 300,
+    height: 340,
     width: '100%',
     position: 'relative',
   },
@@ -529,30 +690,55 @@ const styles = StyleSheet.create({
     height: '100%',
     resizeMode: 'cover',
   },
+  imageFallback: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 28,
+  },
+  imageFallbackTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+    marginTop: 12,
+  },
+  imageFallbackSub: {
+    color: '#CBD5E1',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+  },
   imageOverlay: {
     ...StyleSheet.absoluteFillObject,
   },
   backButton: {
     position: 'absolute',
-    top: 50,
+    top: 56,
     left: 20,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(15,23,42,0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   statusBadge: {
     position: 'absolute',
-    top: 50,
+    top: 56,
     right: 20,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
     gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
   },
   statusText: {
     color: '#FFF',
@@ -561,38 +747,73 @@ const styles = StyleSheet.create({
   },
   headerInfo: {
     position: 'absolute',
-    bottom: 20,
+    bottom: 26,
     left: 20,
+    right: 20,
   },
   treeTitle: {
     color: '#FFF',
-    fontSize: 28,
-    fontWeight: 'bold',
+    fontSize: 30,
+    fontWeight: '800',
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
   scanDate: {
     color: '#E2E8F0',
-    fontSize: 14,
-    marginTop: 4,
+    fontSize: 13,
+    marginTop: 6,
+    fontWeight: '500',
   },
   contentContainer: {
     padding: 20,
-    marginTop: -20,
-    backgroundColor: theme.colors.background,
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
+    marginTop: -26,
+    backgroundColor: '#F8FAFC',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
   },
-  card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 16,
+  quickStatsRow: {
+    flexDirection: 'row',
+    gap: 10,
     marginBottom: 20,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+  },
+  quickStatCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
+    elevation: 2,
+  },
+  quickStatLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  quickStatValue: {
+    fontSize: 13,
+    color: '#0F172A',
+    fontWeight: '800',
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    marginBottom: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
     elevation: 3,
   },
   cardHeader: {
@@ -609,7 +830,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   cardTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: theme.colors.text,
   },
@@ -619,7 +840,9 @@ const styles = StyleSheet.create({
   detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    alignItems: 'center',
+    paddingVertical: 9,
+    gap: 12,
   },
   detailBorder: {
     borderBottomWidth: 1,
@@ -629,17 +852,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: theme.colors.textSecondary,
     fontWeight: '500',
+    flex: 1,
   },
   detailValue: {
     fontSize: 14,
-    color: theme.colors.text,
-    fontWeight: '600',
+    color: '#0F172A',
+    fontWeight: '700',
+    textAlign: 'right',
+    flex: 1,
   },
   diseaseItem: {
-    backgroundColor: theme.colors.surfaceHighlight,
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 10,
+    backgroundColor: '#F8FAFC',
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   diseaseHeader: {
     flexDirection: 'row',
@@ -648,7 +876,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   diseaseName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: theme.colors.error,
   },
@@ -700,8 +928,9 @@ const styles = StyleSheet.create({
   },
   reasonText: {
     fontSize: 14,
-    color: theme.colors.textSecondary,
+    color: '#475569',
     fontStyle: 'italic',
+    lineHeight: 20,
   },
   bulletPoint: {
     flexDirection: 'row',
@@ -719,32 +948,33 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   reanalyzeButton: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: '#0F172A',
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 12,
-    borderRadius: 12,
-    shadowColor: theme.colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    padding: 14,
+    borderRadius: 14,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
   },
   reanalyzeText: {
     color: '#FFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
+    letterSpacing: 0.3,
   },
   promptChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.surfaceHighlight,
+    backgroundColor: '#F8FAFC',
     padding: 10,
-    borderRadius: 8,
+    borderRadius: 10,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderColor: '#E2E8F0',
   },
   promptText: {
     color: theme.colors.text,

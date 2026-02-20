@@ -14,11 +14,12 @@ import {
   Switch, 
   Platform, 
   UIManager,
-  StatusBar 
+  StatusBar
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons, Ionicons, FontAwesome5, Feather } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { useAppRefresh } from '../context/AppRefreshContext';
 import { scanAPI, latexAPI, treeAPI, postAPI, authAPI, userAPI } from '../services/api';
 import theme from '../styles/theme';
 
@@ -81,6 +82,7 @@ const TEAM_MEMBERS = [
 
 const ProfileScreen = ({ navigation, route }) => {
   const { user, logout } = useAuth();
+  const { refreshTick } = useAppRefresh();
   const [profileData, setProfileData] = useState(user);
   const [scanCount, setScanCount] = useState(0);
   const [treeCount, setTreeCount] = useState(0);
@@ -92,10 +94,6 @@ const ProfileScreen = ({ navigation, route }) => {
   const [showListModal, setShowListModal] = useState(false);
   const [listType, setListType] = useState('followers');
   const [showAboutModal, setShowAboutModal] = useState(false);
-  
-  // Settings State
-  const [pushNotifications, setPushNotifications] = useState(true);
-  const [darkMode, setDarkMode] = useState(false);
   
   const scrollY = useRef(new Animated.Value(0)).current;
 
@@ -183,6 +181,11 @@ const ProfileScreen = ({ navigation, route }) => {
       setProfileData(user);
     }
   }, [user?.followers?.length, user?.following?.length, isOtherUser]);
+
+  useEffect(() => {
+    if (refreshTick === 0) return;
+    fetchData();
+  }, [refreshTick]);
 
   const handleMessage = () => {
     navigation.navigate('Chat', { otherUser: profileData });
@@ -408,24 +411,20 @@ const ProfileScreen = ({ navigation, route }) => {
         {/* Preferences */}
         {!isOtherUser && (
         <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>PREFERENCES</Text>
+          <Text style={styles.sectionTitle}>SETTINGS</Text>
           <View style={styles.cardContainer}>
             <SettingRow 
               icon="notifications" 
-              label="Push Notifications" 
-              hasSwitch 
-              value={pushNotifications}
-              onValueChange={setPushNotifications}
+              label="Notification Triggers" 
+              onPress={() => navigation.navigate('NotificationSettings')}
             />
             <View style={styles.rowDivider} />
             <SettingRow 
-              icon="moon" 
-              label="Dark Mode" 
-              hasSwitch 
-              value={darkMode}
-              onValueChange={setDarkMode}
+              icon="shield-checkmark" 
+              label="Privacy & Security" 
+              onPress={() => navigation.navigate('PrivacySecurity')}
             />
-             <View style={styles.rowDivider} />
+            <View style={styles.rowDivider} />
             <SettingRow 
               icon="information-circle" 
               label="About Us" 

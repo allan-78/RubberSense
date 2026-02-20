@@ -16,11 +16,18 @@ import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { theme } from '../styles/theme';
 import { useNotification } from '../context/NotificationContext';
-import { format, isToday, isYesterday } from 'date-fns';
+import { format, isToday, isYesterday, formatDistanceToNowStrict } from 'date-fns';
 
 const NotificationScreen = () => {
   const navigation = useNavigation();
-  const { notifications, markAsRead, markAllAsRead, clearAll } = useNotification();
+  const {
+    notifications,
+    markAsRead,
+    markAllAsRead,
+    clearAll,
+    refreshNotifications,
+    lastSyncedAt,
+  } = useNotification();
   const [activeTab, setActiveTab] = useState('All');
   const [refreshing, setRefreshing] = useState(false);
 
@@ -30,7 +37,7 @@ const NotificationScreen = () => {
     let filtered = notifications;
     if (activeTab === 'Market') filtered = notifications.filter(n => n.type === 'market');
     else if (activeTab === 'Weather') filtered = notifications.filter(n => n.type === 'alert' || n.type === 'info');
-    else if (activeTab === 'System') filtered = notifications.filter(n => n.type === 'system');
+    else if (activeTab === 'System') filtered = notifications.filter(n => n.type === 'system' || n.type === 'social');
     
     // Sort by date desc
     return filtered.sort((a, b) => new Date(b.time) - new Date(a.time));
@@ -58,10 +65,12 @@ const NotificationScreen = () => {
   }, [filteredNotifications]);
 
   const onRefresh = async () => {
-    setRefreshing(true);
-    setTimeout(() => {
+    try {
+      setRefreshing(true);
+      await refreshNotifications({ silent: true });
+    } finally {
       setRefreshing(false);
-    }, 1000);
+    }
   };
 
   const getIcon = (type, iconName) => {
@@ -69,6 +78,7 @@ const NotificationScreen = () => {
     if (type === 'market') return <Feather name={iconName || 'trending-up'} size={size} color="#fff" />;
     if (type === 'alert') return <Ionicons name={iconName || 'warning'} size={size} color="#fff" />;
     if (type === 'system') return <MaterialIcons name={iconName || 'info'} size={size} color="#fff" />;
+    if (type === 'social') return <MaterialIcons name={iconName || 'forum'} size={size} color="#fff" />;
     if (type === 'info') return <Feather name={iconName || 'sun'} size={size} color="#fff" />;
     return <Ionicons name="notifications" size={size} color="#fff" />;
   };
@@ -78,6 +88,7 @@ const NotificationScreen = () => {
       if (type === 'market') return '#10B981';
       if (type === 'alert') return '#EF4444';
       if (type === 'system') return '#3B82F6';
+      if (type === 'social') return '#8B5CF6';
       return theme.colors.primary;
   }
 
@@ -126,7 +137,14 @@ const NotificationScreen = () => {
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
             <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Notifications</Text>
+          <View style={styles.headerTitleBlock}>
+            <Text style={styles.headerTitle}>Notifications</Text>
+            {lastSyncedAt ? (
+              <Text style={styles.syncText}>
+                Updated {formatDistanceToNowStrict(new Date(lastSyncedAt), { addSuffix: true })}
+              </Text>
+            ) : null}
+          </View>
           <View style={styles.actions}>
              {notifications.some(n => !n.read) && (
                 <TouchableOpacity onPress={markAllAsRead} style={styles.actionBtn}>
@@ -227,6 +245,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: theme.colors.text,
     letterSpacing: -0.5,
+  },
+  headerTitleBlock: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  syncText: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
   },
   iconButton: {
     padding: 8,

@@ -4,8 +4,10 @@
 
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
 require('dotenv').config();
 const connectDB = require('./config/database');
+const { initializeSocket } = require('./socket');
 // Import routes (we'll create these next)
 const authRoutes = require('./routes/auth');
 const treeRoutes = require('./routes/trees');
@@ -99,8 +101,11 @@ const startServer = async () => {
     // Connect to MongoDB first
     await connectDB();
     
-    // Then start Express server
-    app.listen(PORT, '0.0.0.0', () => {
+    // Then start HTTP + Socket server
+    const server = http.createServer(app);
+    initializeSocket(server);
+
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`
 ╔════════════════════════════════════════════╗
 ║                                            ║

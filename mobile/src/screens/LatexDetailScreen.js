@@ -272,10 +272,37 @@ const LatexDetailScreen = ({ route, navigation }) => {
               label="Recommended Product" 
               value={batch.productRecommendation?.recommendedProduct} 
             />
+            <DetailRow 
+              label="Expected Quality" 
+              value={batch.productRecommendation?.expectedQuality || (batch.qualityClassification?.grade ? `Grade ${batch.qualityClassification.grade}` : 'N/A')} 
+            />
             <View style={{ marginTop: 10 }}>
                 <Text style={styles.detailLabel}>Reasoning</Text>
                 <Text style={styles.descriptionText}>{batch.productRecommendation?.reason || 'No specific reasoning provided.'}</Text>
             </View>
+            {batch.productRecommendation?.marketValueInsight && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={styles.detailLabel}>Market Value Insight</Text>
+                <Text style={styles.descriptionText}>{batch.productRecommendation.marketValueInsight}</Text>
+              </View>
+            )}
+            {batch.productRecommendation?.preservation && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={styles.detailLabel}>Preservation Advice</Text>
+                <Text style={styles.descriptionText}>{batch.productRecommendation.preservation}</Text>
+              </View>
+            )}
+            {batch.productRecommendation?.recommendedUses?.length > 0 && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={styles.detailLabel}>Suggested Product Uses</Text>
+                {batch.productRecommendation.recommendedUses.map((useItem, index) => (
+                  <View key={`use-${index}`} style={styles.bulletPoint}>
+                    <MaterialIcons name="check-circle-outline" size={16} color={theme.colors.primary} style={{marginTop: 2}} />
+                    <Text style={styles.insightText}>{useItem}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </InfoCard>
 
         </View>

@@ -120,14 +120,69 @@ const runPythonScript = (mode, imageUrl, subMode = '') => {
   });
 };
 
+const toInsightLines = (value) => {
+  if (!value) return [];
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, val]) => {
+        if (Array.isArray(val)) {
+          const joined = val.map((item) => String(item || '').trim()).filter(Boolean).join(', ');
+          return joined ? `${key}: ${joined}` : '';
+        }
+        const text = String(val || '').trim();
+        return text ? `${key}: ${text}` : '';
+      })
+      .filter(Boolean);
+  }
+
+  const text = String(value).trim();
+  return text ? [text] : [];
+};
+
 const generateAiInsights = (data, mode) => {
   const prompts = [];
   const suggestions = [];
+  let overallReport = '';
+  let diagnosis = '';
+  let treatmentPlan = [];
+  let preventionPlan = [];
+  let tappabilityAdvice = '';
 
   if (mode === 'tree') {
      // Disease based prompts
      if (data.diseaseDetection && data.diseaseDetection.length > 0) {
         const disease = data.diseaseDetection[0];
+        const diseaseName = String(disease.name || 'Unknown').trim();
+        const aiDiagnosis = disease.ai_diagnosis;
+
+        if (aiDiagnosis && typeof aiDiagnosis === 'object') {
+            diagnosis = String(aiDiagnosis.diagnosis || '').trim();
+            treatmentPlan = toInsightLines(aiDiagnosis.treatment);
+            preventionPlan = toInsightLines(aiDiagnosis.prevention);
+            tappabilityAdvice = toInsightLines(aiDiagnosis.tappability_advice).join(' ');
+        } else if (aiDiagnosis) {
+            diagnosis = String(aiDiagnosis).trim();
+        }
+
+        const appearsHealthy = disease.severity === 'none' || /healthy|no disease detected/i.test(diseaseName);
+
+        if (appearsHealthy) {
+            overallReport = diagnosis
+              ? `Tree appears healthy. ${diagnosis}`
+              : 'Tree appears healthy with no major disease signals.';
+        } else {
+            overallReport = diagnosis
+              ? `Detected condition: ${diseaseName}. ${diagnosis}`
+              : `Detected condition: ${diseaseName}. Immediate treatment and monitoring are advised.`;
+        }
+
         if (disease.name && disease.name !== 'No disease detected') {
             prompts.push(`How do I treat ${disease.name}?`);
             prompts.push(`Prevent ${disease.name} spreading`);
@@ -136,6 +191,16 @@ const generateAiInsights = (data, mode) => {
             prompts.push("General rubber tree care");
             prompts.push("Fertilizer recommendations");
             suggestions.push("Tree appears healthy. Maintain regular monitoring.");
+        }
+
+        if (treatmentPlan.length > 0) {
+            suggestions.push(`Treatment: ${treatmentPlan.join('; ')}`);
+        }
+        if (preventionPlan.length > 0) {
+            suggestions.push(`Prevention: ${preventionPlan.join('; ')}`);
+        }
+        if (tappabilityAdvice) {
+            suggestions.push(`Tappability: ${tappabilityAdvice}`);
         }
      }
      
@@ -182,6 +247,11 @@ const generateAiInsights = (data, mode) => {
   return {
       promptRecommendations: uniquePrompts.slice(0, 5), // Increased limit slightly
       suggestions: uniqueSuggestions,
+      overallReport,
+      diagnosis,
+      treatmentPlan,
+      preventionPlan,
+      tappabilityAdvice,
       analysisTimestamp: new Date(),
       version: 1
   };

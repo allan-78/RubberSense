@@ -130,6 +130,8 @@ export const authAPI = {
   refresh: () => api.post('/api/auth/refresh'),
   resendVerification: (email) => api.post('/api/auth/resend-verification', { email }),
   forgotPassword: (email) => api.post('/api/auth/forgot-password', { email }),
+  changePassword: (data) => api.put('/api/auth/change-password', data),
+  deactivateAccount: (data) => api.put('/api/auth/deactivate-account', data),
   googleLogin: (data) => api.post('/api/auth/google', data), // For future implementation
 };
 
@@ -300,6 +302,8 @@ export const postAPI = {
 export const userAPI = {
   getProfile: (id) => api.get(`/api/users/${id}`),
   toggleFollow: (id) => api.put(`/api/users/${id}/follow`),
+  blockUser: (id) => api.put(`/api/users/${id}/block`),
+  unblockUser: (id) => api.put(`/api/users/${id}/unblock`),
   updateProfile: async (formData) => {
     try {
       return await api.put('/api/users/profile', formData, {
@@ -332,6 +336,9 @@ export const userAPI = {
 // Message API
 export const messageAPI = {
   getConversations: () => api.get('/api/messages/conversations'),
+  getRequests: () => api.get('/api/messages/requests'),
+  getStatus: (userId) => api.get(`/api/messages/status/${userId}`),
+  respondToRequest: (senderId, action) => api.put(`/api/messages/requests/${senderId}`, { action }),
   getMessages: (userId) => api.get(`/api/messages/${userId}`),
   sendMessage: (receiverId, text) => api.post('/api/messages', { receiverId, text }),
   sendMessageWithMedia: async (formData) => {

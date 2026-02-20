@@ -18,10 +18,12 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { scanAPI, latexAPI } from '../services/api';
+import { useAppRefresh } from '../context/AppRefreshContext';
 import theme from '../styles/theme';
 
 const HistoryScreen = ({ navigation, route }) => {
   const { initialTab, newScan, refreshTimestamp } = route.params || {};
+  const { refreshTick } = useAppRefresh();
   const [activeTab, setActiveTab] = useState(initialTab || 'trees'); // 'trees' or 'latex'
   const [scans, setScans] = useState([]);
   const [latexBatches, setLatexBatches] = useState([]);
@@ -111,6 +113,11 @@ const HistoryScreen = ({ navigation, route }) => {
     loadData();
   };
 
+  useEffect(() => {
+    if (refreshTick === 0) return;
+    loadData();
+  }, [refreshTick, activeTab]);
+
   const getHealthColor = (status) => {
     switch (status) {
       case 'healthy':
@@ -148,7 +155,43 @@ const HistoryScreen = ({ navigation, route }) => {
     }
   };
 
+  const aiDiagnosisSaysHealthy = (aiDiagnosis) => {
+    const toText = (value) => {
+      if (!value) return '';
+      if (Array.isArray(value)) return value.map(toText).join(' ');
+      if (typeof value === 'object') return Object.values(value).map(toText).join(' ');
+      return String(value);
+    };
+    const text = toText(aiDiagnosis).toLowerCase();
+    if (!text) return false;
+
+    if (
+      /no\s+(signs?|evidence)\s+of\s+(disease|infection)|no disease detected|disease[-\s]?free|appears healthy|tree is healthy/.test(text)
+    ) {
+      return true;
+    }
+
+    const hasHealthy = /\bhealthy\b/.test(text);
+    const hasDisease = /\b(diseased?|infection|infected|blight|mildew|rot|canker|fungal?|lesion|necrosis|rust|pustule)\b/.test(text);
+    return hasHealthy && !hasDisease;
+  };
+
   const getScanHealthStatus = (scan) => {
+    const primary = scan.diseaseDetection?.[0];
+    if (primary) {
+      const name = String(primary.name || '').toLowerCase();
+      const severity = String(primary.severity || '').toLowerCase();
+      if (aiDiagnosisSaysHealthy(primary.ai_diagnosis) || severity === 'none' || /healthy|no disease/.test(name)) {
+        return 'healthy';
+      }
+      if (['low', 'moderate', 'medium', 'high', 'critical'].includes(severity)) {
+        return 'diseased';
+      }
+      if (/disease|blight|spot|mildew|rot|canker|mold|infect|lesion|necrosis|rust|pustule/.test(name)) {
+        return 'diseased';
+      }
+    }
+
     if (scan.treeIdentification?.detectedPart === 'leaf' && scan.leafAnalysis?.healthStatus) {
       return scan.leafAnalysis.healthStatus;
     }
