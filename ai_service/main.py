@@ -53,12 +53,12 @@ def get_leaf_model():
 
             if model_path:
                 LEAF_MODEL = YOLO(model_path)
-                sys.stderr.write(f"Ã¢Å“â€¦ [Python ML] Loaded Leaf Model: {model_path}\n")
+                sys.stderr.write(f"ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ [Python ML] Loaded Leaf Model: {model_path}\n")
             else:
                 checked = ", ".join(model_candidates)
-                sys.stderr.write(f"Ã¢ÂÅ’ [Python ML] Leaf model not found. Checked: {checked}\n")
+                sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Leaf model not found. Checked: {checked}\n")
         except Exception as e:
-            sys.stderr.write(f"Ã¢ÂÅ’ [Python ML] Failed to load leaf model: {e}\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Failed to load leaf model: {e}\n")
     return LEAF_MODEL
 
 def get_trunk_model():
@@ -87,11 +87,11 @@ def get_latex_model():
             model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Latex.pt')
             if os.path.exists(model_path):
                 LATEX_MODEL = YOLO(model_path)
-                sys.stderr.write(f"Ã¢Å“â€¦ [Python ML] Loaded Latex Model: {model_path}\n")
+                sys.stderr.write(f"ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ [Python ML] Loaded Latex Model: {model_path}\n")
             else:
-                sys.stderr.write(f"Ã¢ÂÅ’ [Python ML] Latex model not found at {model_path}\n")
+                sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Latex model not found at {model_path}\n")
         except Exception as e:
-            sys.stderr.write(f"Ã¢ÂÅ’ [Python ML] Failed to load latex model: {e}\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Failed to load latex model: {e}\n")
     return LATEX_MODEL
 
 def get_cls_model():
@@ -100,7 +100,7 @@ def get_cls_model():
         try:
             CLS_MODEL = YOLO('yolo11n-cls.pt')
         except Exception as e:
-            sys.stderr.write(f"Ã¢ÂÅ’ [Python ML] Failed to load CLS model: {e}\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Failed to load CLS model: {e}\n")
     return CLS_MODEL
 
 def get_groq_analysis(disease_name, confidence, spot_count, color_name):
@@ -145,7 +145,7 @@ def get_groq_analysis(disease_name, confidence, spot_count, color_name):
             content = response.json()['choices'][0]['message']['content']
             return json.loads(content)
     except Exception as e:
-        sys.stderr.write(f"Ã¢Å¡Â Ã¯Â¸Â [Groq API] Analysis failed: {e}\n")
+        sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Groq API] Analysis failed: {e}\n")
     
     return None
 
@@ -203,7 +203,7 @@ def get_groq_latex_analysis(latex_type, confidence, contamination_level, drc):
             content = response.json()['choices'][0]['message']['content']
             return json.loads(content)
     except Exception as e:
-        sys.stderr.write(f"Ã¢Å¡Â Ã¯Â¸Â [Groq API] Latex Analysis failed: {e}\n")
+        sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Groq API] Latex Analysis failed: {e}\n")
     
     return None
 
@@ -450,7 +450,7 @@ def classify_content(img):
                 # User Feedback: "clear trunk detected as not trunk" -> We need to be less strict.
                 # Changed from 0.4 to 0.6 to allow more ambiguity.
                 if non_plant_score > 0.6 and leaf_score < 0.2 and trunk_score < 0.2:
-                     sys.stderr.write(f"Ã¢Å¡Â Ã¯Â¸Â [Python ML] Generic model detected NON-PLANT object. Non-Plant Score: {non_plant_score:.2f}\n")
+                     sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Python ML] Generic model detected NON-PLANT object. Non-Plant Score: {non_plant_score:.2f}\n")
                      primary_part = 'unknown'
                 
                 # 2. Require reasonable plant score
@@ -462,11 +462,11 @@ def classify_content(img):
                         primary_part = 'leaf'
                 else:
                     # Likely not a plant (or very unsure)
-                    sys.stderr.write(f"Ã¢Å¡Â Ã¯Â¸Â [Python ML] Generic model did not detect plant features. Top 1: {names[top5[0]]}\n")
+                    sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Python ML] Generic model did not detect plant features. Top 1: {names[top5[0]]}\n")
                     primary_part = 'unknown'
 
         except Exception as e:
-            sys.stderr.write(f"Ã¢Å¡Â Ã¯Â¸Â [Python ML] Generic model check failed: {e}\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Python ML] Generic model check failed: {e}\n")
 
     # 2. If Generic thinks it's a leaf (or is unsure), VALIDATE with Leaf Model
     #    If Generic thinks it's 'unknown', we give Leaf Model a chance ONLY if confidence was low
@@ -492,17 +492,17 @@ def classify_content(img):
                 required_conf = 0.35 if primary_part == 'leaf' else 0.55
                 
                 if top1_conf > required_conf:
-                    sys.stderr.write(f"Ã¢Å“â€¦ [Python ML] Leaf Model identified content with confidence: {top1_conf:.2f} (Threshold: {required_conf})\n")
+                    sys.stderr.write(f"ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ [Python ML] Leaf Model identified content with confidence: {top1_conf:.2f} (Threshold: {required_conf})\n")
                     return {'is_tree': True, 'primary_part': 'leaf', 'confidence': top1_conf}
                 else:
-                    sys.stderr.write(f"Ã¢Å¡Â Ã¯Â¸Â [Python ML] Leaf Model low confidence: {top1_conf:.2f} (Threshold: {required_conf})\n")
+                    sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Python ML] Leaf Model low confidence: {top1_conf:.2f} (Threshold: {required_conf})\n")
                     # If Generic thought it was a leaf but Leaf Model disagrees heavily?
                     # We stick with Generic's decision if it was confident, otherwise downgrade to unknown
                     if primary_part == 'leaf' and confidence < 0.4:
                         primary_part = 'unknown'
 
             except Exception as e:
-                 sys.stderr.write(f"Ã¢Å¡Â Ã¯Â¸Â [Python ML] Leaf Model classification check failed: {e}\n")
+                 sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Python ML] Leaf Model classification check failed: {e}\n")
 
     if primary_part != 'unknown': 
         return {'is_tree': True, 'primary_part': primary_part, 'confidence': confidence}
@@ -529,7 +529,7 @@ def download_image(url):
         sys.stderr.write(f"Error downloading image: {str(e)}\n")
         return None
 
-def leaf_has_spatial_detection(img, min_conf=0.30):
+def leaf_has_spatial_detection(img, min_conf=0.20):
     """
     Strict leaf validation using Leaf-v2 spatial detections only (OBB/boxes).
     Returns: (is_valid, best_conf, detected_count)
@@ -990,7 +990,7 @@ def main():
             spot_count = data.get('spot_count', 0)
             color_name = data.get('color_name', 'Green')
             
-            sys.stderr.write(f"Ã°Å¸Â§Â  [Python AI] Generating suggestions for {disease_name}...\n")
+            sys.stderr.write(f"ÃƒÂ°Ã…Â¸Ã‚Â§Ã‚Â  [Python AI] Generating suggestions for {disease_name}...\n")
             
             ai_insights = get_groq_analysis(disease_name, confidence, spot_count, color_name)
             
@@ -1008,7 +1008,7 @@ def main():
             return
 
         except Exception as e:
-             sys.stderr.write(f"Ã¢ÂÅ’ [Python AI] Error parsing input or generating suggestions: {e}\n")
+             sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python AI] Error parsing input or generating suggestions: {e}\n")
              print(json.dumps({"error": str(e)}))
              return
 
@@ -1017,7 +1017,7 @@ def main():
     raw_sub_mode = sys.argv[3] if len(sys.argv) > 3 else ''
     sub_mode = raw_sub_mode.strip().lower()
     
-    sys.stderr.write(f"Ã¢â€žÂ¹Ã¯Â¸Â [Python ML] Mode: {mode}, SubMode: '{sub_mode}' (Raw: '{raw_sub_mode}')\n")
+    sys.stderr.write(f"ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¹ÃƒÂ¯Ã‚Â¸Ã‚Â [Python ML] Mode: {mode}, SubMode: '{sub_mode}' (Raw: '{raw_sub_mode}')\n")
 
     img = download_image(image_url)
     if img is None:
@@ -1049,13 +1049,13 @@ def main():
 
             if strong_leaf_mismatch or strong_non_tree_mismatch:
                  sys.stderr.write(
-                     f"Ã¢ÂÅ’ [Python ML] User specified 'Trunk', strong mismatch "
+                     f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] User specified 'Trunk', strong mismatch "
                      f"(detected='{classification['primary_part']}', conf={classification['confidence']:.2f}). Rejecting.\n"
                  )
                  print(json.dumps({"error": "Detected part non-trunk only. Please try again."}))
                  return
 
-            sys.stderr.write("Ã¢Å“â€¦ [Python ML] User specified 'Trunk' scan accepted.\n")
+            sys.stderr.write("ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ [Python ML] User specified 'Trunk' scan accepted.\n")
             classification['primary_part'] = 'trunk'
             classification['is_tree'] = True
             classification['confidence'] = max(float(classification['confidence']), 0.35)
@@ -1073,15 +1073,14 @@ def main():
 
             if strong_trunk_mismatch or strong_non_tree_mismatch:
                  sys.stderr.write(
-                     f"Ã¢ÂÅ’ [Python ML] User specified 'Leaf', strong mismatch "
+                     f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] User specified 'Leaf', strong mismatch "
                      f"(detected='{classification['primary_part']}', conf={classification['confidence']:.2f}). Rejecting.\n"
                  )
                  print(json.dumps({"error": "Detected part non-leaf only. Please try again."}))
                  return
 
-            sys.stderr.write("Ã¢Å“â€¦ [Python ML] User specified 'Leaf' scan accepted.\n")
             # Strict validation: Leaf mode requires spatial detections from Leaf-v2.
-            leaf_valid, leaf_best_conf, leaf_count = leaf_has_spatial_detection(img, min_conf=0.30)
+            leaf_valid, leaf_best_conf, leaf_count = leaf_has_spatial_detection(img, min_conf=0.20)
             if not leaf_valid:
                 sys.stderr.write(
                     f"[Python ML] User specified 'Leaf', but Leaf-v2 found no valid boxes/OBB "
@@ -1093,6 +1092,7 @@ def main():
             classification['primary_part'] = 'leaf'
             classification['is_tree'] = True
             classification['confidence'] = max(float(classification['confidence']), float(leaf_best_conf), 0.35)
+            sys.stderr.write("[Python ML] User specified 'Leaf' scan accepted.\n")
         
         base_confidence = classification['confidence'] * 100
         
@@ -1109,7 +1109,7 @@ def main():
         # Logic: If it's a leaf scan (user specified OR detected)
         if classification['primary_part'] == 'leaf':
             # Safety check: never run leaf analysis without spatial leaf detections.
-            leaf_valid, leaf_best_conf, leaf_count = leaf_has_spatial_detection(img, min_conf=0.30)
+            leaf_valid, leaf_best_conf, leaf_count = leaf_has_spatial_detection(img, min_conf=0.20)
             if not leaf_valid:
                 sys.stderr.write(
                     f"[Python ML] Leaf branch blocked - no valid Leaf-v2 boxes/OBB "
@@ -1183,7 +1183,7 @@ def main():
             # Reject only when multiple signals strongly say this is not latex.
             if (strong_tree_signal or strong_non_tree_signal) and weak_latex_signal and weak_latex_model:
                 sys.stderr.write(
-                    f"Ã¢ÂÅ’ [Python ML] Latex mode rejected after model check "
+                    f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Latex mode rejected after model check "
                     f"(detected='{classification['primary_part']}', conf={classification['confidence']:.2f}, "
                     f"model_conf={model_confidence:.1f}, latex_ratio={latex_presence_ratio:.3f}).\n"
                 )
@@ -1246,7 +1246,7 @@ def analyze_latex_with_model(img, image_path_for_saving=None):
                     latex_type = "Unknown"
                     confidence = 0.0
             
-            sys.stderr.write(f"Ã¢Å“â€¦ [Python ML] Latex Model Prediction: {latex_type} ({confidence:.1f}%)\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ [Python ML] Latex Model Prediction: {latex_type} ({confidence:.1f}%)\n")
             
             # --- Combine AI Prediction with Heuristics ---
             
@@ -1290,7 +1290,7 @@ def analyze_latex_with_model(img, image_path_for_saving=None):
                 
                 # If mask is empty (e.g., lighting issues), fallback to center crop
                 if cv2.countNonZero(latex_mask) < (img.shape[0] * img.shape[1] * 0.05): # Less than 5% latex found
-                    sys.stderr.write("Ã¢Å¡Â Ã¯Â¸Â [Python ML] Latex segmentation failed, falling back to center crop.\n")
+                    sys.stderr.write("ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Python ML] Latex segmentation failed, falling back to center crop.\n")
                     h, w = img.shape[:2]
                     center_h, center_w = h // 2, w // 2
                     crop_h, crop_w = h // 3, w // 3
@@ -1381,7 +1381,7 @@ def analyze_latex_with_model(img, image_path_for_saving=None):
             drc = max(5.0, drc) # Min floor
 
             # --- AI Insights (Groq) ---
-            sys.stderr.write(f"Ã°Å¸Â§Â  [Python ML] Requesting detailed latex analysis from Groq...\n")
+            sys.stderr.write(f"ÃƒÂ°Ã…Â¸Ã‚Â§Ã‚Â  [Python ML] Requesting detailed latex analysis from Groq...\n")
             ai_insights = get_groq_latex_analysis(latex_type, confidence, contamination_level, drc)
             
             ai_recommendation = build_latex_ai_recommendation(ai_insights, grade, description)
@@ -1443,7 +1443,7 @@ def analyze_latex_with_model(img, image_path_for_saving=None):
                 }
             }
         except Exception as e:
-            sys.stderr.write(f"Ã¢ÂÅ’ [Python ML] Model inference error: {e}\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Model inference error: {e}\n")
             # Fallback to heuristic
             return analyze_latex_heuristic(img)
     
