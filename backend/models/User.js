@@ -86,6 +86,33 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  pushTokens: [{
+    token: {
+      type: String,
+      trim: true
+    },
+    platform: {
+      type: String,
+      enum: ['android', 'ios', 'web', 'unknown'],
+      default: 'unknown'
+    },
+    deviceId: {
+      type: String,
+      trim: true
+    },
+    appVersion: {
+      type: String,
+      trim: true
+    },
+    lastSeenAt: {
+      type: Date,
+      default: Date.now
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   isActive: {
     type: Boolean,
     default: true

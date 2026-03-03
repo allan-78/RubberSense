@@ -59,6 +59,13 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow RubberSense to use your location to map rubber farms and show local weather."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/logo/logo.png",
+          "color": "#10B981"
+        }
       ]
     ],
     "extra": {

@@ -12,34 +12,50 @@ const { protect } = require('../middleware/auth');
 const fs = require('fs');
 const upload = require('../middleware/upload');
 const { uploadToCloudinary } = require('../config/cloudinary');
+const { sendPushToUser } = require('../services/expoPush');
 
 const createOrRefreshFollowNotification = async ({ recipientId, senderId }) => {
   if (!recipientId || !senderId || String(recipientId) === String(senderId)) return;
 
   try {
-    await Notification.findOneAndUpdate(
-      {
-        recipient: recipientId,
-        sender: senderId,
-        type: 'follow'
-      },
-      {
-        $set: {
-          message: 'started following you',
-          isRead: false,
-          link: `/profile/${senderId}`,
-          additionalData: {
-            action: 'follow',
-            senderId: String(senderId)
+    const [notification, sender] = await Promise.all([
+      Notification.findOneAndUpdate(
+        {
+          recipient: recipientId,
+          sender: senderId,
+          type: 'follow'
+        },
+        {
+          $set: {
+            message: 'started following you',
+            isRead: false,
+            link: `/profile/${senderId}`,
+            additionalData: {
+              action: 'follow',
+              senderId: String(senderId)
+            }
           }
+        },
+        {
+          new: true,
+          upsert: true,
+          setDefaultsOnInsert: true
         }
-      },
-      {
-        new: true,
-        upsert: true,
-        setDefaultsOnInsert: true
+      ),
+      User.findById(senderId).select('name')
+    ]);
+
+    const senderName = sender?.name || 'Someone';
+    await sendPushToUser(recipientId, {
+      title: 'New Follower',
+      body: `${senderName} started following you`,
+      data: {
+        type: 'follow',
+        notificationId: String(notification?._id || ''),
+        senderId: String(senderId),
+        link: `/profile/${senderId}`
       }
-    );
+    });
   } catch (error) {
     console.error('Failed to upsert follow notification:', error.message);
   }

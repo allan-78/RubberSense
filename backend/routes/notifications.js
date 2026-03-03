@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
 const Notification = require('../models/Notification');
+const User = require('../models/User');
+const { isValidExpoPushToken, normalizePushToken } = require('../services/expoPush');
 
 // @route   GET /api/notifications
 // @desc    Get all notifications for the current user
@@ -38,6 +40,72 @@ router.get('/unread', protect, async (req, res) => {
       success: true,
       unreadCount
     });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// @route   POST /api/notifications/push-token
+// @desc    Register or refresh device push token for current user
+// @access  Private
+router.post('/push-token', protect, async (req, res) => {
+  try {
+    const token = normalizePushToken(req.body?.token);
+    if (!token || !isValidExpoPushToken(token)) {
+      return res.status(400).json({ success: false, error: 'Valid Expo push token is required' });
+    }
+
+    const platformRaw = String(req.body?.platform || '').trim().toLowerCase();
+    const platform = ['android', 'ios', 'web'].includes(platformRaw) ? platformRaw : 'unknown';
+    const deviceId = req.body?.deviceId ? String(req.body.deviceId).trim() : '';
+    const appVersion = req.body?.appVersion ? String(req.body.appVersion).trim() : '';
+    const now = new Date();
+
+    const user = await User.findById(req.user.id).select('pushTokens');
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const existing = Array.isArray(user.pushTokens) ? user.pushTokens : [];
+    const nextTokens = existing.filter((item) => normalizePushToken(item?.token) !== token);
+    nextTokens.push({
+      token,
+      platform,
+      deviceId,
+      appVersion,
+      lastSeenAt: now,
+      createdAt: now
+    });
+
+    user.pushTokens = nextTokens.slice(-10);
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Push token registered',
+      data: { count: user.pushTokens.length }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// @route   DELETE /api/notifications/push-token
+// @desc    Remove device push token for current user
+// @access  Private
+router.delete('/push-token', protect, async (req, res) => {
+  try {
+    const token = normalizePushToken(req.body?.token || req.query?.token);
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Push token is required' });
+    }
+
+    await User.updateOne(
+      { _id: req.user.id },
+      { $pull: { pushTokens: { token } } }
+    );
+
+    res.json({ success: true, message: 'Push token removed' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

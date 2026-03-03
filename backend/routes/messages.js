@@ -8,6 +8,7 @@ const { protect } = require('../middleware/auth');
 const fs = require('fs');
 const upload = require('../middleware/upload');
 const { uploadToCloudinary } = require('../config/cloudinary');
+const { sendPushToUser } = require('../services/expoPush');
 
 const uploadAttachments = async (files, folder) => {
   if (!files || files.length === 0) return [];
@@ -213,6 +214,31 @@ const sendMessageHandler = async (req, res) => {
 
     emitToUser(receiverId, 'message:new', payload);
     emitToUser(req.user.id, 'message:new', payload);
+
+    const senderName = savedMessage?.sender?.name || 'Someone';
+    const previewText = (text || '').trim();
+    const hasAttachments = Array.isArray(savedMessage?.attachments) && savedMessage.attachments.length > 0;
+    const pushBody = previewText
+      ? `${senderName}: ${previewText.slice(0, 120)}`
+      : hasAttachments
+        ? `${senderName} sent an attachment`
+        : `${senderName} sent you a message`;
+    const pushTitle = requestStatus === 'pending' ? 'New Message Request' : 'New Message';
+
+    try {
+      await sendPushToUser(receiverId, {
+        title: pushTitle,
+        body: pushBody,
+        data: {
+          type: requestStatus === 'pending' ? 'message_request' : 'message',
+          senderId: String(req.user.id),
+          receiverId: String(receiverId),
+          messageId: String(savedMessage._id)
+        }
+      });
+    } catch (pushError) {
+      console.error('Failed to send message push:', pushError?.message || pushError);
+    }
 
     if (requestStatus === 'pending') {
       emitToUser(receiverId, 'message:request', {

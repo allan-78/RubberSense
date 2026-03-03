@@ -7,7 +7,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RandomForestRegressor } from './RandomForest';
 
-export const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://10.143.82.142:5000').replace(/\/$/, '');
+export const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://allan12345-rubbersense.hf.space').replace(/\/$/, '');
 
 console.log('🔌 [API Service] Initialized');
 console.log('🔗 [API Service] Using API URL:', API_URL);
@@ -942,6 +942,8 @@ export const marketAPI = {
 export const notificationAPI = {
   getAll: () => api.get('/api/notifications'),
   getUnread: () => api.get('/api/notifications/unread'),
+  registerPushToken: (payload) => api.post('/api/notifications/push-token', payload),
+  unregisterPushToken: (token) => api.delete('/api/notifications/push-token', { data: { token } }),
   markAsRead: (id) => api.put(`/api/notifications/${id}/read`, {}),
   markAllAsRead: () => api.put('/api/notifications/mark-all-read', {}),
   delete: (id) => api.delete(`/api/notifications/${id}`),

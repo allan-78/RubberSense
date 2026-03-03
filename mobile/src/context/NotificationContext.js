@@ -2,6 +2,7 @@ import React, { createContext, useState, useContext, useEffect, useCallback, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { marketAPI, postAPI, messageAPI, mailAPI, notificationAPI } from '../services/api';
 
 Notifications.setNotificationHandler({
@@ -42,6 +43,8 @@ const SERVER_NOTIFICATION_META = {
   content_hidden: { type: 'alert', title: 'Content Hidden', icon: 'warning', color: '#EF4444' },
 };
 const ANNOUNCEMENT_EVENT_PREFIX = 'announcement-';
+const EXPO_PUSH_TOKEN_KEY = 'expoPushToken';
+const EXPO_PUSH_TOKEN_SYNC_KEY = 'expoPushTokenSyncKey';
 
 const extractAnnouncementIdFromEventKey = (eventKey) => {
   if (typeof eventKey !== 'string') return null;
@@ -49,6 +52,14 @@ const extractAnnouncementIdFromEventKey = (eventKey) => {
 
   const id = eventKey.slice(ANNOUNCEMENT_EVENT_PREFIX.length).trim();
   return id || null;
+};
+
+const resolveExpoProjectId = () => {
+  const fromExpoConfig = Constants?.expoConfig?.extra?.eas?.projectId;
+  const fromEasConfig = Constants?.easConfig?.projectId;
+  const fromEnv = process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
+
+  return fromExpoConfig || fromEasConfig || fromEnv || null;
 };
 
 const mapServerNotification = (notification) => {
@@ -101,6 +112,7 @@ export const NotificationProvider = ({ children }) => {
   const notificationsRef = useRef([]);
   const syncStateRef = useRef(DEFAULT_SYNC_STATE);
   const settingsRef = useRef(DEFAULT_SETTINGS);
+  const pushTokenRef = useRef('');
 
   useEffect(() => {
     notificationsRef.current = notifications;
@@ -115,7 +127,42 @@ export const NotificationProvider = ({ children }) => {
     settingsRef.current = settings;
   }, [settings]);
 
-  const registerForPushNotificationsAsync = async () => {
+  const syncPushTokenWithServer = useCallback(async (tokenOverride = null) => {
+    try {
+      const candidate = String(
+        tokenOverride
+        || pushTokenRef.current
+        || (await AsyncStorage.getItem(EXPO_PUSH_TOKEN_KEY))
+        || ''
+      ).trim();
+      if (!candidate) return false;
+
+      const userRaw = await AsyncStorage.getItem('user');
+      if (!userRaw) return false;
+
+      const user = JSON.parse(userRaw);
+      const userId = String(user?._id || user?.id || '').trim();
+      if (!userId) return false;
+
+      const syncKey = `${userId}:${candidate}`;
+      const lastSyncedKey = await AsyncStorage.getItem(EXPO_PUSH_TOKEN_SYNC_KEY);
+      if (lastSyncedKey === syncKey) return true;
+
+      await notificationAPI.registerPushToken({
+        token: candidate,
+        platform: Platform.OS,
+        appVersion: Constants?.expoConfig?.version || 'unknown',
+      });
+
+      await AsyncStorage.setItem(EXPO_PUSH_TOKEN_SYNC_KEY, syncKey);
+      pushTokenRef.current = candidate;
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }, []);
+
+  const registerForPushNotificationsAsync = useCallback(async () => {
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
         name: 'default',
@@ -134,8 +181,27 @@ export const NotificationProvider = ({ children }) => {
 
     if (finalStatus !== 'granted') {
       console.log('Failed to get push token for push notification');
+      return null;
     }
-  };
+
+    try {
+      const projectId = resolveExpoProjectId();
+      const tokenResult = projectId
+        ? await Notifications.getExpoPushTokenAsync({ projectId })
+        : await Notifications.getExpoPushTokenAsync();
+
+      const expoPushToken = String(tokenResult?.data || '').trim();
+      if (!expoPushToken) return null;
+
+      pushTokenRef.current = expoPushToken;
+      await AsyncStorage.setItem(EXPO_PUSH_TOKEN_KEY, expoPushToken);
+      await syncPushTokenWithServer(expoPushToken);
+      return expoPushToken;
+    } catch (error) {
+      console.log('Failed to retrieve Expo push token', error);
+      return null;
+    }
+  }, [syncPushTokenWithServer]);
 
   const commitNotifications = useCallback(async (list) => {
     const normalized = Array.isArray(list) ? list : [];
@@ -322,6 +388,8 @@ export const NotificationProvider = ({ children }) => {
     const currentSync = syncStateRef.current || DEFAULT_SYNC_STATE;
 
     try {
+      await syncPushTokenWithServer();
+
       const [marketRes, postsRes, announcementsRes, requestsRes, notificationsRes, userRaw] = await Promise.all([
         currentSettings.marketAlerts ? marketAPI.getForecast().catch(() => null) : Promise.resolve(null),
         currentSettings.blogMonitor ? postAPI.getAll().catch(() => null) : Promise.resolve(null),
@@ -510,7 +578,7 @@ export const NotificationProvider = ({ children }) => {
       console.log('Notification refresh failed', error);
       return { success: false, added: 0 };
     }
-  }, [addNotification, bootstrapFromCurrentData, saveSyncState]);
+  }, [addNotification, bootstrapFromCurrentData, saveSyncState, syncPushTokenWithServer]);
 
   const checkWeatherAlert = useCallback(async (weatherData) => {
     if (!(settingsRef.current?.weatherAlerts)) return;
@@ -621,7 +689,10 @@ export const NotificationProvider = ({ children }) => {
           setLastSyncedAt(parsedSync.lastSyncedAt || null);
         }
 
-        await registerForPushNotificationsAsync();
+        const pushToken = await registerForPushNotificationsAsync();
+        if (pushToken) {
+          await syncPushTokenWithServer(pushToken);
+        }
       } catch (error) {
         console.log('Failed to initialize notifications context', error);
       } finally {
@@ -630,7 +701,7 @@ export const NotificationProvider = ({ children }) => {
     };
 
     initialize();
-  }, []);
+  }, [registerForPushNotificationsAsync, syncPushTokenWithServer]);
 
   useEffect(() => {
     if (!ready) return;

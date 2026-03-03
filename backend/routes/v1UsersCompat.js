@@ -12,6 +12,7 @@ const CommunityPost = require('../models/CommunityPost');
 const Notification = require('../models/Notification');
 const Tree = require('../models/Tree');
 const Scan = require('../models/Scan');
+const { sendPushToUser } = require('../services/expoPush');
 
 const cleanLocalFile = (filePath) => {
   try {
@@ -68,29 +69,44 @@ const createOrRefreshFollowNotification = async ({ recipientId, senderId }) => {
   if (!recipientId || !senderId || String(recipientId) === String(senderId)) return;
 
   try {
-    await Notification.findOneAndUpdate(
-      {
-        recipient: recipientId,
-        sender: senderId,
-        type: 'follow'
-      },
-      {
-        $set: {
-          message: 'started following you',
-          isRead: false,
-          link: `/profile/${senderId}`,
-          additionalData: {
-            action: 'follow',
-            senderId: String(senderId)
+    const [notification, sender] = await Promise.all([
+      Notification.findOneAndUpdate(
+        {
+          recipient: recipientId,
+          sender: senderId,
+          type: 'follow'
+        },
+        {
+          $set: {
+            message: 'started following you',
+            isRead: false,
+            link: `/profile/${senderId}`,
+            additionalData: {
+              action: 'follow',
+              senderId: String(senderId)
+            }
           }
+        },
+        {
+          new: true,
+          upsert: true,
+          setDefaultsOnInsert: true
         }
-      },
-      {
-        new: true,
-        upsert: true,
-        setDefaultsOnInsert: true
+      ),
+      User.findById(senderId).select('name')
+    ]);
+
+    const senderName = sender?.name || 'Someone';
+    await sendPushToUser(recipientId, {
+      title: 'New Follower',
+      body: `${senderName} started following you`,
+      data: {
+        type: 'follow',
+        notificationId: String(notification?._id || ''),
+        senderId: String(senderId),
+        link: `/profile/${senderId}`
       }
-    );
+    });
   } catch (error) {
     console.error('Failed to upsert follow notification:', error.message);
   }
