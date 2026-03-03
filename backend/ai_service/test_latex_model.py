@@ -59,9 +59,22 @@ def test_model(model_path, target_path):
             results = model(file_path, verbose=False)
             
             for r in results:
-                top1_index = r.probs.top1
-                top1_conf = r.probs.top1conf.item()
-                predicted_class = r.names[top1_index]
+                predicted_class = "unknown"
+                top1_conf = 0.0
+
+                if hasattr(r, 'boxes') and r.boxes is not None and len(r.boxes) > 0:
+                    best_idx = int(r.boxes.conf.argmax().item())
+                    cls_id = int(r.boxes.cls[best_idx].item())
+                    top1_conf = float(r.boxes.conf[best_idx].item())
+                    predicted_class = r.names[cls_id]
+                elif hasattr(r, 'probs') and r.probs is not None:
+                    top1_index = r.probs.top1
+                    top1_conf = r.probs.top1conf.item()
+                    predicted_class = r.names[top1_index]
+                else:
+                    filename = os.path.basename(file_path)
+                    print(f"⚠️ {filename}: No predictions")
+                    continue
                 
                 # Attempt to infer ground truth from folder name
                 # E.g., if path is ".../yellow latex/img1.jpg", ground truth is "yellow latex"
@@ -106,7 +119,7 @@ def test_model(model_path, target_path):
 if __name__ == "__main__":
     # Default paths
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    default_model = os.path.join(base_dir, "models", "rubber_tree_model", "weights", "Latex.pt")
+    default_model = os.path.join(base_dir, "models", "rubber_tree_model", "weights", "Latex-v2.pt")
     
     # Arguments
     model_path = sys.argv[1] if len(sys.argv) > 1 else default_model
@@ -121,6 +134,6 @@ if __name__ == "__main__":
     
     if not target_path:
         print("Usage: python test_latex_model.py [model_path] [image_or_folder_path]")
-        print("Example: python test_latex_model.py models/Latex.pt ./test_images")
+        print("Example: python test_latex_model.py models/Latex-v2.pt ./test_images")
     else:
         test_model(model_path, target_path)

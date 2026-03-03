@@ -6,9 +6,10 @@ import {
   Animated, 
   Dimensions, 
   Platform,
-  Text
+  Keyboard
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '../styles/theme';
 
 const { width } = Dimensions.get('window');
@@ -20,31 +21,80 @@ const ACTIVE_SCALE = 1.1;
 const INACTIVE_SCALE = 1.0;
 
 const CustomTabBar = ({ state, descriptors, navigation }) => {
+  const insets = useSafeAreaInsets();
   const focusedOptions = descriptors[state.routes[state.index].key].options;
 
   if (focusedOptions.tabBarStyle?.display === 'none') {
     return null;
   }
 
-  // Animation for the active tab indicator
-  const translateX = useRef(new Animated.Value(0)).current;
-  const [layout, setLayout] = useState([]);
+  // Keep the tab bar above the keyboard instead of letting it be overlapped.
+  const keyboardOffset = useRef(new Animated.Value(0)).current;
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
-  // Calculate tab width based on number of tabs (excluding the center camera button logic if handled differently, but here we treat it as 5 items)
-  const tabWidth = TAB_BAR_WIDTH / state.routes.length;
+  const baseBottom = Platform.OS === 'ios'
+    ? Math.max(insets.bottom, 20)
+    : Math.max(insets.bottom, 16);
 
   useEffect(() => {
-    // Animate the indicator when index changes
-    Animated.spring(translateX, {
-      toValue: state.index * tabWidth,
-      useNativeDriver: true,
-      damping: 15,
-      stiffness: 100,
-    }).start();
-  }, [state.index, tabWidth]);
+    const resolveKeyboardHeight = (event) => {
+      if (!event?.endCoordinates) {
+        return 0;
+      }
+
+      if (Platform.OS === 'ios') {
+        const windowHeight = Dimensions.get('window').height;
+        const keyboardY = event.endCoordinates.screenY ?? windowHeight;
+        return Math.max(windowHeight - keyboardY, 0);
+      }
+
+      return Math.max(event.endCoordinates.height ?? 0, 0);
+    };
+
+    const animateKeyboardOffset = (height, duration = 250) => {
+      Animated.timing(keyboardOffset, {
+        toValue: height,
+        duration,
+        useNativeDriver: false,
+      }).start();
+    };
+
+    const handleKeyboardShow = (event) => {
+      const height = resolveKeyboardHeight(event);
+      setIsKeyboardVisible(height > 0);
+      animateKeyboardOffset(height, event?.duration ?? 250);
+    };
+
+    const handleKeyboardHide = (event) => {
+      setIsKeyboardVisible(false);
+      animateKeyboardOffset(0, event?.duration ?? 200);
+    };
+
+    const listeners = Platform.OS === 'ios'
+      ? [
+          Keyboard.addListener('keyboardWillShow', handleKeyboardShow),
+          Keyboard.addListener('keyboardWillChangeFrame', handleKeyboardShow),
+          Keyboard.addListener('keyboardWillHide', handleKeyboardHide),
+        ]
+      : [
+          Keyboard.addListener('keyboardDidShow', handleKeyboardShow),
+          Keyboard.addListener('keyboardDidHide', handleKeyboardHide),
+        ];
+
+    return () => {
+      listeners.forEach((listener) => listener.remove());
+    };
+  }, [keyboardOffset]);
+
+  const containerBottom = Animated.add(keyboardOffset, baseBottom);
+  const shouldHideOnKeyboard = Boolean(focusedOptions.tabBarHideOnKeyboard && isKeyboardVisible);
+  const containerOpacity = shouldHideOnKeyboard ? 0 : 1;
 
   return (
-    <View style={styles.container}>
+    <Animated.View
+      style={[styles.container, { bottom: containerBottom, opacity: containerOpacity }]}
+      pointerEvents={shouldHideOnKeyboard ? 'none' : 'auto'}
+    >
       <View style={styles.barWrapper}>
         {/* Animated Background Indicator (Optional: Can be removed for a cleaner look, or kept for "active state" background) */}
         {/* <Animated.View 
@@ -146,7 +196,7 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
           );
         })}
       </View>
-    </View>
+    </Animated.View>
   );
 };
 

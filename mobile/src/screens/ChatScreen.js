@@ -73,6 +73,7 @@ const ChatScreen = ({ route, navigation }) => {
   const [statusLoading, setStatusLoading] = useState(false);
   const [respondingRequest, setRespondingRequest] = useState(false);
   const [unblocking, setUnblocking] = useState(false);
+  const [deletingMessageId, setDeletingMessageId] = useState(null);
   const flatListRef = useRef(null);
 
   useEffect(() => {
@@ -122,17 +123,41 @@ const ChatScreen = ({ route, navigation }) => {
           fetchChatStatus(false);
         }
       };
+      const onMessageDeleted = (payload) => {
+        const targetId = String(payload?.messageId || '');
+        if (!targetId) return;
+
+        if (payload?.deletedForEveryone) {
+          setMessages((prev) => (prev || []).map((msg) => {
+            const id = String(msg?._id || msg?.id || '');
+            if (id !== targetId) return msg;
+            return {
+              ...msg,
+              isDeleted: true,
+              text: payload?.text || 'This message was deleted',
+              content: payload?.text || 'This message was deleted',
+              attachments: [],
+              deletedAt: payload?.deletedAt || new Date().toISOString(),
+            };
+          }));
+          return;
+        }
+
+        setMessages((prev) => (prev || []).filter((msg) => String(msg?._id || msg?.id) !== targetId));
+      };
 
       socket.on('message:new', onMessage);
       socket.on('message:request', onRequest);
       socket.on('message:request-updated', onRequest);
       socket.on('chat:block-updated', onBlockUpdated);
+      socket.on('message:deleted', onMessageDeleted);
 
       cleanup = () => {
         socket.off('message:new', onMessage);
         socket.off('message:request', onRequest);
         socket.off('message:request-updated', onRequest);
         socket.off('chat:block-updated', onBlockUpdated);
+        socket.off('message:deleted', onMessageDeleted);
       };
     };
 
@@ -391,6 +416,61 @@ const ChatScreen = ({ route, navigation }) => {
     }
   };
 
+  const getMessageId = (item) => String(item?._id || item?.id || '');
+
+  const deleteMessage = async (message) => {
+    const messageId = getMessageId(message);
+    if (!messageId || message?.pending) return;
+
+    setDeletingMessageId(messageId);
+
+    try {
+      const response = await messageAPI.deleteMessage(messageId);
+      const result = response?.data || response || {};
+
+      if (result?.deletedForEveryone) {
+        setMessages((prev) => (prev || []).map((m) => {
+          if (getMessageId(m) !== messageId) return m;
+          return {
+            ...m,
+            isDeleted: true,
+            text: result?.text || 'This message was deleted',
+            content: result?.text || 'This message was deleted',
+            attachments: [],
+            deletedAt: result?.deletedAt || new Date().toISOString(),
+          };
+        }));
+      } else {
+        setMessages((prev) => (prev || []).filter((m) => getMessageId(m) !== messageId));
+      }
+
+      await fetchMessages();
+    } catch (error) {
+      console.log('Error deleting message:', error);
+      await fetchMessages();
+      Alert.alert('Error', 'Failed to delete message');
+    } finally {
+      setDeletingMessageId(null);
+    }
+  };
+
+  const confirmDeleteMessage = (message) => {
+    if (!message || message?.pending) return;
+
+    Alert.alert(
+      'Delete Message',
+      'Remove this message from your chat?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteMessage(message),
+        },
+      ]
+    );
+  };
+
   const handleRequestAction = async (action) => {
     if (!otherUser?._id || respondingRequest) return;
     try {
@@ -492,32 +572,51 @@ const ChatScreen = ({ route, navigation }) => {
     const senderId = sender?._id || sender?.id || (typeof sender !== 'object' ? sender : null);
     const myId = user?._id || user?.id;
     const isMe = senderId && myId && String(senderId) === String(myId);
+    const isDeletedMessage = Boolean(item?.isDeleted);
     const isRead = item.read || false;
+    const messageId = getMessageId(item);
+    const isDeleting = deletingMessageId && messageId && deletingMessageId === messageId;
+    const displayText = isDeletedMessage
+      ? 'This message was deleted'
+      : hashBadWords(item?.text || '');
 
     return (
-      <View style={[
-        styles.messageBubble, 
-        isMe ? styles.myMessage : styles.theirMessage
-      ]}>
-        {item.text ? (
+      <TouchableOpacity
+        activeOpacity={0.9}
+        disabled={!isMe || item?.pending || isDeleting || isDeletedMessage}
+        onLongPress={() => confirmDeleteMessage(item)}
+        delayLongPress={250}
+        style={[
+          styles.messageBubble,
+          isMe ? styles.myMessage : styles.theirMessage,
+          isDeletedMessage && styles.deletedMessageBubble,
+        ]}
+      >
+        {displayText ? (
           <Text style={[
             styles.messageText,
-            isMe ? styles.myMessageText : styles.theirMessageText
+            isDeletedMessage
+              ? styles.deletedMessageText
+              : (isMe ? styles.myMessageText : styles.theirMessageText)
           ]}>
-            {hashBadWords(item.text)}
+            {displayText}
           </Text>
         ) : null}
         
-        {renderAttachmentsList(item.attachments)}
+        {!isDeletedMessage ? renderAttachmentsList(item.attachments) : null}
 
         <View style={styles.messageFooter}>
           <Text style={[
             styles.messageTime,
-            isMe ? styles.myMessageTime : styles.theirMessageTime
+            isDeletedMessage
+              ? styles.deletedMessageTime
+              : (isMe ? styles.myMessageTime : styles.theirMessageTime)
           ]}>
-            {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {isDeleting
+              ? 'Deleting...'
+              : new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </Text>
-          {isMe && (
+          {isMe && !isDeletedMessage && (
             <Ionicons 
               name={isRead ? "checkmark-done" : "checkmark"} 
               size={16} 
@@ -526,7 +625,7 @@ const ChatScreen = ({ route, navigation }) => {
             />
           )}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -613,7 +712,7 @@ const ChatScreen = ({ route, navigation }) => {
         <FlatList
           ref={flatListRef}
           data={messages}
-          keyExtractor={item => item._id}
+          keyExtractor={(item, index) => String(item?._id || item?.id || `${item?.createdAt || 'msg'}-${index}`)}
           renderItem={renderMessage}
           contentContainerStyle={styles.messagesList}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
@@ -770,6 +869,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
     borderBottomLeftRadius: 4,
   },
+  deletedMessageBubble: {
+    backgroundColor: '#E2E8F0',
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+  },
   messageText: {
     fontSize: 15,
     lineHeight: 22,
@@ -779,6 +883,10 @@ const styles = StyleSheet.create({
   },
   theirMessageText: {
     color: theme.colors.text,
+  },
+  deletedMessageText: {
+    color: theme.colors.textSecondary,
+    fontStyle: 'italic',
   },
   messageFooter: {
     flexDirection: 'row',
@@ -794,6 +902,9 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.7)',
   },
   theirMessageTime: {
+    color: theme.colors.textLight,
+  },
+  deletedMessageTime: {
     color: theme.colors.textLight,
   },
   statusIcon: {

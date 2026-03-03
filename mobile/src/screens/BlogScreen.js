@@ -22,9 +22,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import { Video, ResizeMode } from 'expo-av';
 import { useAuth } from '../context/AuthContext';
 import { useAppRefresh } from '../context/AppRefreshContext';
-import { postAPI, userAPI } from '../services/api';
+import { postAPI, userAPI, resolveMediaUrl } from '../services/api';
 import theme from '../styles/theme';
 
 const BAD_WORDS = [
@@ -42,7 +43,8 @@ const BAD_WORDS = [
   'whore',
 ];
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // Increased to 50MB
+const MAX_FILE_SIZE_MB = 250;
+const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg'];
 // Expanded to match backend support + common types
 const ALLOWED_FILE_TYPES = [
@@ -142,6 +144,7 @@ const BlogScreen = ({ navigation, route }) => {
   const [lightboxAttachments, setLightboxAttachments] = useState([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [failedImages, setFailedImages] = useState({});
+  const [failedVideos, setFailedVideos] = useState({});
   const [blockingActionLoading, setBlockingActionLoading] = useState(false);
 
   const commentInputRef = useRef(null);
@@ -151,6 +154,38 @@ const BlogScreen = ({ navigation, route }) => {
   const myUserId = getUserId(user);
   const viewingUserId = getUserId(viewingUser);
   const isOwnProfile = Boolean(myUserId && viewingUserId && String(myUserId) === String(viewingUserId));
+
+  const getFollowersCount = (targetUser) => {
+    const direct = targetUser?.followersCount;
+    if (typeof direct === 'number') return direct;
+    if (typeof direct === 'string' && !Number.isNaN(Number(direct))) return Number(direct);
+
+    const statsTotal = targetUser?.stats?.totalFollowers;
+    if (typeof statsTotal === 'number') return statsTotal;
+    if (typeof statsTotal === 'string' && !Number.isNaN(Number(statsTotal))) return Number(statsTotal);
+
+    const statsFallback = targetUser?.stats?.followers;
+    if (typeof statsFallback === 'number') return statsFallback;
+    if (typeof statsFallback === 'string' && !Number.isNaN(Number(statsFallback))) return Number(statsFallback);
+
+    return Array.isArray(targetUser?.followers) ? targetUser.followers.length : 0;
+  };
+
+  const getFollowingCount = (targetUser) => {
+    const direct = targetUser?.followingCount;
+    if (typeof direct === 'number') return direct;
+    if (typeof direct === 'string' && !Number.isNaN(Number(direct))) return Number(direct);
+
+    const statsTotal = targetUser?.stats?.totalFollowing;
+    if (typeof statsTotal === 'number') return statsTotal;
+    if (typeof statsTotal === 'string' && !Number.isNaN(Number(statsTotal))) return Number(statsTotal);
+
+    const statsFallback = targetUser?.stats?.following;
+    if (typeof statsFallback === 'number') return statsFallback;
+    if (typeof statsFallback === 'string' && !Number.isNaN(Number(statsFallback))) return Number(statsFallback);
+
+    return Array.isArray(targetUser?.following) ? targetUser.following.length : 0;
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -228,6 +263,11 @@ const BlogScreen = ({ navigation, route }) => {
     setFailedImages(prev => ({ ...prev, [uri]: true }));
   };
 
+  const handleVideoError = (uri) => {
+    if (!uri) return;
+    setFailedVideos(prev => ({ ...prev, [uri]: true }));
+  };
+
   const openLightbox = (attachments, index) => {
     const items = (attachments || [])
       .filter(file => {
@@ -292,7 +332,7 @@ const BlogScreen = ({ navigation, route }) => {
         const isVideo = type.startsWith('video/');
 
         if (size && size > MAX_FILE_SIZE) {
-          skipped.push(`${name} exceeds 50MB`);
+          skipped.push(`${name} exceeds ${MAX_FILE_SIZE_MB}MB`);
           return acc;
         }
         
@@ -338,7 +378,7 @@ const BlogScreen = ({ navigation, route }) => {
         const type = asset.mimeType || 'application/octet-stream';
         
         if (size && size > MAX_FILE_SIZE) {
-          skipped.push(`${name} exceeds 50MB`);
+          skipped.push(`${name} exceeds ${MAX_FILE_SIZE_MB}MB`);
           return acc;
         }
         
@@ -592,17 +632,25 @@ const BlogScreen = ({ navigation, route }) => {
         throw new Error('Missing target user id');
       }
       const response = await userAPI.toggleFollow(targetUserId);
-      
-      updateFollowingOptimistic(viewingUser, isNowFollowing);
+      const confirmedIsFollowing =
+        typeof response?.isFollowing === 'boolean' ? response.isFollowing : isNowFollowing;
+
+      updateFollowingOptimistic(viewingUser, confirmedIsFollowing);
       
       // 3. Sync Global State
       await refreshUser();
       
-      // 4. Update with actual server data if available
-      if (response && response.followersCount !== undefined) {
-         // Optionally we can re-fetch the full profile to be sure
-         // const freshProfile = await userAPI.getProfile(viewingUser._id);
-         // setViewingUser(freshProfile.data);
+      // 4. Re-fetch profile so mobile reflects the same backend state web reads.
+      const freshProfileRes = await userAPI.getProfile(targetUserId);
+      const freshPayload = freshProfileRes?.data || freshProfileRes;
+      const freshProfile = freshPayload?.data || freshPayload;
+      if (freshProfile?._id) {
+        setViewingUser(prev => ({
+          ...prev,
+          ...freshProfile,
+          isBlockedByMe: !!freshProfile.isBlockedByMe,
+          hasBlockedMe: !!freshProfile.hasBlockedMe,
+        }));
       }
     } catch (error) {
       console.log('Error toggling follow:', error);
@@ -862,7 +910,22 @@ const BlogScreen = ({ navigation, route }) => {
   };
 
   const getAttachments = (resource) => {
-    return resource?.attachments || resource?.media || resource?.files || [];
+    const attachments = resource?.attachments;
+    if (Array.isArray(attachments) && attachments.length > 0) return attachments;
+
+    const media = resource?.media;
+    if (Array.isArray(media) && media.length > 0) return media;
+    if (media && typeof media === 'object') return [media];
+
+    const files = resource?.files;
+    if (Array.isArray(files) && files.length > 0) return files;
+
+    const fallbackImage = resource?.image || resource?.imageURL || resource?.imageUrl;
+    if (fallbackImage) {
+      return [{ url: fallbackImage, type: 'image/*', name: 'image' }];
+    }
+
+    return [];
   };
 
   const handleDownload = (uri) => {
@@ -878,14 +941,21 @@ const BlogScreen = ({ navigation, route }) => {
       <View style={styles.attachmentsGrid}>
         {attachments.map((file, index) => {
           const isString = typeof file === 'string';
-          const uri = isString ? file : (file.url || file.uri);
+          const rawUri = isString ? file : (file.url || file.uri || file.path || file.secure_url);
+          const resolvedUri = resolveMediaUrl(rawUri);
+          const uri = resolvedUri ? encodeURI(resolvedUri) : resolvedUri;
           const name = isString ? (file.split('/').pop() || 'Attachment') : (file.name || file.originalName || 'Attachment');
+          const uriText = String(uri || '');
           const typeGuess = /\.(png|jpe?g|gif|webp)$/i.test(name) ? 'image/*' :
-                            /\.(mp4|mov|webm)$/i.test(name) ? 'video/*' : '';
-          const type = isString ? typeGuess : (file.type || file.mimeType || typeGuess);
+                            /\.(mp4|mov|webm|avi|m4v)$/i.test(name) ? 'video/*' : '';
+          const type = isString ? typeGuess : (file.type || file.mimetype || file.mimeType || typeGuess);
           const isImage = type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(name);
-          const isVideo = type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(name);
+          const isVideo =
+            type.startsWith('video/') ||
+            /\.(mp4|mov|webm|avi|m4v)(\?.*)?$/i.test(name) ||
+            /\.(mp4|mov|webm|avi|m4v)(\?.*)?$/i.test(uriText);
           const isFailed = uri ? failedImages[uri] : false;
+          const videoFailed = uri ? failedVideos[uri] : false;
           return (
             <View key={`${name}-${index}`} style={styles.attachmentItem}>
               {isImage && uri ? (
@@ -919,6 +989,42 @@ const BlogScreen = ({ navigation, route }) => {
                     </TouchableOpacity>
                   </View>
                 )
+              ) : (isVideo && uri) ? (
+                <View style={styles.videoWrapper}>
+                  {videoFailed ? (
+                    <TouchableOpacity
+                      style={styles.videoFallback}
+                      onPress={() => handleDownload(uri)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open video ${name}`}
+                    >
+                      <Ionicons name="videocam" size={20} color="#FFFFFF" />
+                      <Text style={styles.videoFallbackText} numberOfLines={1}>
+                        Open video
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Video
+                      source={{ uri }}
+                      style={styles.attachmentVideo}
+                      useNativeControls
+                      resizeMode={ResizeMode.COVER}
+                      shouldPlay={false}
+                      isLooping={false}
+                      onError={() => handleVideoError(uri)}
+                    />
+                  )}
+                  <View style={styles.videoBadge}>
+                    <Ionicons name="videocam" size={14} color="#FFFFFF" />
+                  </View>
+                  <TouchableOpacity
+                    style={styles.downloadOverlay}
+                    onPress={() => handleDownload(uri)}
+                    accessibilityLabel={`Download ${name}`}
+                  >
+                    <Ionicons name="download-outline" size={16} color="white" />
+                  </TouchableOpacity>
+                </View>
               ) : (
                 <View style={styles.attachmentFileContainer}>
                   <TouchableOpacity 
@@ -1297,12 +1403,12 @@ const BlogScreen = ({ navigation, route }) => {
                 {/* Horizontal Stats Row */}
                 <View style={styles.statsRow}>
                   <View style={styles.statItemCompact}>
-                    <Text style={styles.statNumberCompact}>{(viewingUser.followersCount ?? viewingUser.followers?.length ?? 0)}</Text>
+                    <Text style={styles.statNumberCompact}>{getFollowersCount(viewingUser)}</Text>
                     <Text style={styles.statLabelCompact}>Followers</Text>
                   </View>
 
                   <View style={styles.statItemCompact}>
-                    <Text style={styles.statNumberCompact}>{(viewingUser.followingCount ?? viewingUser.following?.length ?? 0)}</Text>
+                    <Text style={styles.statNumberCompact}>{getFollowingCount(viewingUser)}</Text>
                     <Text style={styles.statLabelCompact}>Following</Text>
                   </View>
 
@@ -1804,6 +1910,38 @@ const styles = StyleSheet.create({
   attachmentImage: {
     width: '100%',
     height: 120,
+  },
+  videoWrapper: {
+    position: 'relative',
+    width: '100%',
+    backgroundColor: '#000000',
+  },
+  attachmentVideo: {
+    width: '100%',
+    height: 120,
+    backgroundColor: '#000000',
+  },
+  videoFallback: {
+    width: '100%',
+    height: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111827',
+    gap: 8,
+  },
+  videoFallbackText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  videoBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   attachmentFile: {
     flexDirection: 'row',

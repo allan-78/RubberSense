@@ -74,6 +74,15 @@ const CameraScreen = ({ navigation }) => {
   const selectedCategoryLabel =
     selectedCategory === 'trunk' ? 'Trunks' : selectedCategory === 'leaf' ? 'Leaf' : 'Latex';
 
+  const treeDetections = Array.isArray(scanResult?.data?.diseaseDetection)
+    ? scanResult.data.diseaseDetection.filter(Boolean)
+    : [];
+  const primaryTreeDetection = treeDetections[0] || null;
+  const hasProcessedOverlay = Boolean(scanResult?.data?.processedImageURL);
+  const resultPreviewUri = scanResult?.type === 'tree'
+    ? (scanResult?.data?.processedImageURL || scanResult?.data?.imageURL || image?.uri || null)
+    : (scanResult?.data?.imageURL || image?.uri || null);
+
   const setScannerCategory = (category) => {
     const normalized = String(category || '').toLowerCase();
 
@@ -768,36 +777,75 @@ const CameraScreen = ({ navigation }) => {
                <View style={styles.resultBody}>
                    {scanResult.type === 'tree' ? (
                        <>
+                           {resultPreviewUri ? (
+                               <View style={styles.resultPreviewWrap}>
+                                   <Image
+                                       source={{ uri: resultPreviewUri }}
+                                       style={styles.resultPreviewImage}
+                                       resizeMode="cover"
+                                   />
+                                   <Text style={styles.resultPreviewCaption}>
+                                       {hasProcessedOverlay ? 'Detected boxes and labels' : 'Raw image preview (processed overlay not received)'}
+                                   </Text>
+                               </View>
+                           ) : null}
+
                            <View style={styles.resultRow}>
                                <Text style={styles.resultLabel}>Diagnosis</Text>
                                <Text style={[styles.resultValue, { 
-                                   color: scanResult.data?.diseaseDetection?.[0]?.name === 'No disease detected' ? '#16A34A' : '#DC2626',
+                                   color: primaryTreeDetection?.severity === 'none' ? '#16A34A' : '#DC2626',
                                    fontWeight: '700'
                                }]}>
-                                   {scanResult.data?.diseaseDetection?.[0]?.name || 'Unknown'}
+                                   {primaryTreeDetection?.name || 'Unknown'}
                                </Text>
                            </View>
-                           
-                           {scanResult.data?.diseaseDetection?.[0]?.confidence && (
-                               <View style={styles.resultRow}>
-                                   <Text style={styles.resultLabel}>Confidence</Text>
-                                   <Text style={styles.resultValue}>
-                                       {Math.round(scanResult.data.diseaseDetection[0].confidence)}%
+                            
+                           {Number.isFinite(Number(primaryTreeDetection?.confidence)) && (
+                                <View style={styles.resultRow}>
+                                    <Text style={styles.resultLabel}>Confidence</Text>
+                                    <Text style={styles.resultValue}>
+                                        {Math.round(Number(primaryTreeDetection?.confidence || 0))}%
+                                    </Text>
+                                </View>
+                            )}
+
+                           {treeDetections.length > 0 && (
+                               <View style={styles.detectionsBox}>
+                                   <Text style={styles.detectionsTitle}>
+                                       Detected Classes ({treeDetections.length})
                                    </Text>
+                                   {treeDetections.slice(0, 6).map((det, index) => (
+                                       <View key={`tree-det-${index}-${det?.name || 'unknown'}`} style={styles.detectionRow}>
+                                           <View
+                                               style={[
+                                                   styles.detectionDot,
+                                                   { backgroundColor: det?.severity === 'none' ? '#16A34A' : '#DC2626' }
+                                               ]}
+                                           />
+                                           <Text style={styles.detectionName} numberOfLines={1}>
+                                               {det?.name || 'Unknown'}
+                                           </Text>
+                                           <Text style={styles.detectionPct}>
+                                               {Number.isFinite(Number(det?.confidence))
+                                                   ? `${Math.round(Number(det.confidence))}%`
+                                                   : '--'}
+                                           </Text>
+                                       </View>
+                                   ))}
                                </View>
                            )}
 
-                           {scanResult.data?.diseaseDetection?.[0]?.recommendation && (
-                               <View style={styles.recommendationBox}>
-                                   <View style={styles.recommendationHeader}>
-                                     <MaterialIcons name="lightbulb-outline" size={20} color={theme.colors.primary} />
-                                     <Text style={styles.recommendationTitle}>Recommendation</Text>
-                                   </View>
-                                   <Text style={styles.recommendationText}>
-                                       {scanResult.data.diseaseDetection[0].recommendation}
-                                   </Text>
-                               </View>
-                           )}
+                           {primaryTreeDetection?.recommendation && (
+                                <View style={styles.recommendationBox}>
+                                    <View style={styles.recommendationHeader}>
+                                      <MaterialIcons name="lightbulb-outline" size={20} color={theme.colors.primary} />
+                                      <Text style={styles.recommendationTitle}>Recommendation</Text>
+                                    </View>
+                                    <Text style={styles.recommendationText}>
+                                        {primaryTreeDetection.recommendation}
+                                    </Text>
+                                </View>
+                            )}
 
                            {/* Tappability */}
                            {scanResult.data?.tappabilityAssessment && (
@@ -2171,6 +2219,25 @@ const styles = StyleSheet.create({
     marginBottom: 32,
     width: '100%',
   },
+  resultPreviewWrap: {
+    marginBottom: 16,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  resultPreviewImage: {
+    width: '100%',
+    height: 200,
+  },
+  resultPreviewCaption: {
+    fontSize: 12,
+    color: '#475569',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontWeight: '600',
+  },
   resultRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2210,6 +2277,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#475569',
     lineHeight: 22,
+  },
+  detectionsBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginBottom: 12,
+  },
+  detectionsTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+  },
+  detectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  detectionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  detectionName: {
+    flex: 1,
+    fontSize: 13,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  detectionPct: {
+    fontSize: 13,
+    color: '#0F172A',
+    fontWeight: '700',
+    marginLeft: 8,
   },
   tappabilityBox: {
     marginTop: 20,

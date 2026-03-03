@@ -317,7 +317,7 @@ const HistoryScreen = ({ navigation, route }) => {
       activeOpacity={0.9}
     >
       <View style={styles.cardImageContainer}>
-        <Image source={{ uri: item.imageURL }} style={styles.scanImage} />
+        <Image source={{ uri: item.processedImageURL || item.imageURL || item.imageUrl }} style={styles.scanImage} />
         <View style={[styles.cardTypeIcon, { backgroundColor: theme.colors.primary }]}>
           <MaterialIcons name={partIcon} size={14} color="#FFF" />
         </View>
@@ -326,7 +326,7 @@ const HistoryScreen = ({ navigation, route }) => {
       <View style={styles.scanInfo}>
         <View style={styles.scanHeader}>
           <View style={styles.headerTopRow}>
-            <Text style={styles.scanTreeName} numberOfLines={1}>Tree {item.tree?.treeID}</Text>
+            <Text style={styles.scanTreeName} numberOfLines={1}>Tree {item.tree?.treeID || 'Unknown'}</Text>
             <View
               style={[
                 styles.statusBadge,

@@ -5,6 +5,10 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const parsedMaxUploadSize = Number(process.env.MAX_UPLOAD_SIZE_MB);
+const MAX_UPLOAD_SIZE_MB = Number.isFinite(parsedMaxUploadSize) && parsedMaxUploadSize > 0
+  ? parsedMaxUploadSize
+  : 250;
 
 // Ensure uploads directory exists
 const uploadDir = 'uploads/';
@@ -39,7 +43,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB max file size
+    fileSize: Math.max(1, MAX_UPLOAD_SIZE_MB) * 1024 * 1024
   },
   fileFilter: fileFilter
 });

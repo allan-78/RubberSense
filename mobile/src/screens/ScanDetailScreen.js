@@ -31,6 +31,8 @@ const ScanDetailScreen = ({ route, navigation }) => {
 
   const resolveScanImageUri = (scanData) => {
     const candidates = [
+      scanData?.processedImageURL,
+      scanData?.processedImageUrl,
       scanData?.imageURL,
       scanData?.imageUrl,
       scanData?.image,
@@ -80,12 +82,32 @@ const ScanDetailScreen = ({ route, navigation }) => {
         return;
     }
 
+    if (currentScan?.isLegacyScan) {
+        Alert.alert(
+          "Not Available",
+          "This scan came from legacy web history data and cannot be re-analyzed from this screen."
+        );
+        return;
+    }
+
     try {
         console.log("🔄 Requesting re-analysis for scan:", currentScan._id);
         setIsReanalyzing(true);
         const res = await scanAPI.reanalyze(currentScan._id);
         if (res.success && res.data) {
-            setCurrentScan(res.data);
+                        setCurrentScan((previousScan) => {
+              const incomingTree = res.data.tree;
+              const hasPopulatedTree =
+                incomingTree &&
+                typeof incomingTree === 'object' &&
+                !!incomingTree.treeID;
+
+              return {
+                ...previousScan,
+                ...res.data,
+                tree: hasPopulatedTree ? incomingTree : previousScan?.tree
+              };
+            });
             Alert.alert("Success", "Scan re-analyzed successfully with latest models.");
         }
     } catch (error) {
@@ -97,16 +119,76 @@ const ScanDetailScreen = ({ route, navigation }) => {
     }
   };
 
-  const renderContent = (val) => {
-    if (!val) return '';
-    if (Array.isArray(val)) return val.join(', ');
-    if (typeof val === 'object') {
-        return Object.entries(val).map(([k, v]) => {
-            const vStr = Array.isArray(v) ? v.join(', ') : String(v);
-            return `${k.charAt(0).toUpperCase() + k.slice(1)}: ${vStr}`;
-        }).join('\n');
+  const formatWholePercent = (value) => {
+    const numericValue = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numericValue)) return 'N/A';
+    return `${Math.round(numericValue)}%`;
+  };
+
+  const normalizeBulletText = (text) =>
+    text
+      .replace(/^[-*•]\s*/, '')
+      .replace(/^\d+[.)]\s*/, '')
+      .trim();
+
+  const toBulletItems = (value) => {
+    if (value == null) return [];
+
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => toBulletItems(item));
     }
-    return String(val);
+
+    if (typeof value === 'object') {
+      return Object.entries(value).flatMap(([key, nestedValue]) => {
+        const nestedItems = toBulletItems(nestedValue);
+        if (!nestedItems.length) return [];
+        const prettyKey = key.replace(/_/g, ' ');
+        const label = prettyKey.charAt(0).toUpperCase() + prettyKey.slice(1);
+        return nestedItems.map((item) => `${label}: ${item}`);
+      });
+    }
+
+    const normalized = String(value)
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .trim();
+
+    if (!normalized) return [];
+
+    const items = normalized
+      .split('\n')
+      .flatMap((line) => line.split(';'))
+      .flatMap((line) => {
+        const sentenceParts = line.match(/[^.!?]+[.!?]?/g);
+        return sentenceParts && sentenceParts.length > 0 ? sentenceParts : [line];
+      })
+      .map((line) => normalizeBulletText(line))
+      .filter(Boolean);
+
+    return items.length ? items : [normalized];
+  };
+
+  const renderBulletedContent = (
+    value,
+    iconName = 'chevron-right',
+    iconColor = theme.colors.primary
+  ) => {
+    const items = toBulletItems(value);
+    if (!items.length) {
+      return <Text style={styles.diseaseRec}>N/A</Text>;
+    }
+
+    return items.map((item, index) => (
+      <View key={`${iconName}-${index}`} style={styles.recommendationBullet}>
+        <MaterialIcons
+          name={iconName}
+          size={15}
+          color={iconColor}
+          style={styles.recommendationBulletIcon}
+        />
+        <Text style={styles.bulletText}>{item}</Text>
+      </View>
+    ));
   };
 
   const getHealthColor = (status) => {
@@ -181,6 +263,30 @@ const ScanDetailScreen = ({ route, navigation }) => {
     return fallback;
   };
 
+  const leafDiseaseNames = Array.isArray(scan.leafAnalysis?.diseases)
+    ? scan.leafAnalysis.diseases.map((disease) => disease?.name).filter(Boolean)
+    : [];
+
+  const primaryDisease = normalizeDiseaseForDisplay(scan.diseaseDetection?.[0]);
+
+  const actionableDiseaseDetections = Array.isArray(scan.diseaseDetection)
+    ? scan.diseaseDetection
+        .map((disease) => normalizeDiseaseForDisplay(disease))
+        .filter((disease) => {
+          if (!disease) return false;
+          const diseaseName = String(disease.name || '').toLowerCase();
+          const severity = String(disease.severity || '').toLowerCase();
+          const markedHealthy = /healthy|no disease/.test(diseaseName) || severity === 'none';
+          return !markedHealthy;
+        })
+    : [];
+
+  const actionableLeafDiseaseCount = leafDiseaseNames.filter(
+    (name) => !/healthy|no disease|none/i.test(String(name))
+  ).length;
+
+  const effectiveDiseaseCount = Math.max(actionableDiseaseDetections.length, actionableLeafDiseaseCount);
+
   const InfoCard = ({ title, icon, children }) => (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
@@ -204,6 +310,13 @@ const ScanDetailScreen = ({ route, navigation }) => {
     <View style={[styles.detailRow, !isLast && styles.detailBorder]}>
       <Text style={styles.detailLabel}>{label}</Text>
       <Text style={styles.detailValue}>{value || 'N/A'}</Text>
+    </View>
+  );
+
+  const AnalysisMetric = ({ label, value }) => (
+    <View style={styles.analysisMetricCard}>
+      <Text style={styles.analysisMetricLabel}>{label}</Text>
+      <Text style={styles.analysisMetricValue}>{value || 'N/A'}</Text>
     </View>
   );
 
@@ -283,23 +396,25 @@ const ScanDetailScreen = ({ route, navigation }) => {
         <View style={styles.contentContainer}>
           <View style={styles.quickStatsRow}>
             <View style={styles.quickStatCard}>
-              <Text style={styles.quickStatLabel}>Detected Part</Text>
+              <Text style={styles.quickStatLabel}>
+                {scan.treeIdentification?.detectedPart === 'leaf' ? 'Detected Class' : 'Detected Part'}
+              </Text>
               <Text style={styles.quickStatValue}>
-                {formatDetectedPart(scan.treeIdentification?.detectedPart)}
+                {scan.treeIdentification?.detectedPart === 'leaf'
+                  ? (primaryDisease?.name || 'Unknown')
+                  : formatDetectedPart(scan.treeIdentification?.detectedPart)}
               </Text>
             </View>
             <View style={styles.quickStatCard}>
               <Text style={styles.quickStatLabel}>Confidence</Text>
               <Text style={styles.quickStatValue}>
-                {typeof scan.treeIdentification?.confidence === 'number'
-                  ? `${Math.round(scan.treeIdentification.confidence)}%`
-                  : 'N/A'}
+                {formatWholePercent(scan.treeIdentification?.confidence)}
               </Text>
             </View>
             <View style={styles.quickStatCard}>
               <Text style={styles.quickStatLabel}>Diseases</Text>
               <Text style={styles.quickStatValue}>
-                {Array.isArray(scan.diseaseDetection) ? scan.diseaseDetection.length : 0}
+                {effectiveDiseaseCount}
               </Text>
             </View>
           </View>
@@ -328,14 +443,14 @@ const ScanDetailScreen = ({ route, navigation }) => {
                 {scan.aiInsights.overallReport && (
                     <View style={{ marginBottom: 10 }}>
                         <Text style={[styles.detailLabel, { marginBottom: 6 }]}>Overall Report:</Text>
-                        <Text style={styles.diseaseRec}>{scan.aiInsights.overallReport}</Text>
+                        {renderBulletedContent(scan.aiInsights.overallReport, 'auto-awesome', theme.colors.secondary)}
                     </View>
                 )}
 
                 {scan.aiInsights.diagnosis && (
                     <View style={{ marginBottom: 10 }}>
                         <Text style={[styles.detailLabel, { marginBottom: 6 }]}>AI Diagnosis:</Text>
-                        <Text style={styles.diseaseRec}>{scan.aiInsights.diagnosis}</Text>
+                        {renderBulletedContent(scan.aiInsights.diagnosis, 'insights', theme.colors.primary)}
                     </View>
                 )}
 
@@ -358,12 +473,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                 {scan.aiInsights.suggestions?.length > 0 && (
                     <View style={{ marginTop: 12 }}>
                         <Text style={[styles.detailLabel, { marginBottom: 8 }]}>Suggestions:</Text>
-                        {scan.aiInsights.suggestions.map((suggestion, index) => (
-                             <View key={index} style={styles.bulletPoint}>
-                                <MaterialIcons name="auto-awesome" size={16} color={theme.colors.secondary} />
-                                <Text style={styles.bulletText}>{suggestion}</Text>
-                             </View>
-                        ))}
+                        {renderBulletedContent(scan.aiInsights.suggestions, 'auto-awesome', theme.colors.secondary)}
                     </View>
                 )}
                 
@@ -380,8 +490,10 @@ const ScanDetailScreen = ({ route, navigation }) => {
               value={scan.treeIdentification?.isRubberTree ? "Hevea brasiliensis" : "Unknown"} 
             />
             <DetailRow 
-              label="Detected Part" 
-              value={formatDetectedPart(scan.treeIdentification?.detectedPart)} 
+              label={scan.treeIdentification?.detectedPart === 'leaf' ? 'Detected Class' : 'Detected Part'}
+              value={scan.treeIdentification?.detectedPart === 'leaf'
+                ? (primaryDisease?.name || 'Unknown')
+                : formatDetectedPart(scan.treeIdentification?.detectedPart)}
             />
             <DetailRow 
               label="Maturity" 
@@ -389,7 +501,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
             />
             <DetailRow 
               label="Confidence" 
-              value={`${scan.treeIdentification?.confidence}%`} 
+              value={formatWholePercent(scan.treeIdentification?.confidence)} 
               isLast
             />
           </InfoCard>
@@ -397,50 +509,69 @@ const ScanDetailScreen = ({ route, navigation }) => {
           {/* 2. Leaf Analysis (Conditional) */}
           {(scan.treeIdentification?.detectedPart === 'leaf' || scan.leafAnalysis) && (
             <InfoCard title="Leaf Analysis" icon="eco">
-              <DetailRow 
-                label="Health Status" 
-                value={getScanHealthStatus(scan)?.toUpperCase()} 
-              />
-              <DetailRow 
-                label="Color" 
-                value={scan.leafAnalysis?.color} 
-              />
-              <DetailRow 
-                label="Spot Count" 
-                value={scan.leafAnalysis?.spotCount?.toString()} 
-              />
-              <DetailRow 
-                label="Diseases" 
-                value={scan.leafAnalysis?.diseases?.length > 0 ? scan.leafAnalysis.diseases.map(d => d.name).join(', ') : 'None'} 
-                isLast
-              />
+              <LinearGradient
+                colors={['#0B3A2E', '#0F172A']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.analysisHero}
+              >
+                <Text style={styles.analysisHeroLabel}>Leaf Health Profile</Text>
+                <Text style={styles.analysisHeroValue}>{getScanHealthStatus(scan)?.toUpperCase() || 'UNKNOWN'}</Text>
+              </LinearGradient>
+
+              <View style={styles.analysisMetricGrid}>
+                <AnalysisMetric label="Leaf Color" value={scan.leafAnalysis?.color || 'Unknown'} />
+                <AnalysisMetric
+                  label="Detected Issues"
+                  value={leafDiseaseNames.length ? `${leafDiseaseNames.length}` : '0'}
+                />
+                <AnalysisMetric label="Detected Class" value={primaryDisease?.name || 'Unknown'} />
+              </View>
+
+              <View style={styles.analysisSection}>
+                <Text style={styles.diseaseRecTitle}>Leaf Findings</Text>
+                {leafDiseaseNames.length > 0 ? (
+                  renderBulletedContent(leafDiseaseNames, 'local-florist', theme.colors.warning)
+                ) : (
+                  <Text style={styles.diseaseRec}>No leaf disease indicators detected.</Text>
+                )}
+              </View>
             </InfoCard>
           )}
 
           {/* 3. Trunk Analysis (Conditional) */}
           {(scan.treeIdentification?.detectedPart === 'trunk' || scan.treeIdentification?.detectedPart === 'whole_tree' || !scan.treeIdentification?.detectedPart) && (
             <InfoCard title="Trunk Analysis" icon="straighten">
-              <DetailRow 
-                label="Detected Disease" 
-                value={normalizeDiseaseForDisplay(scan.diseaseDetection?.[0])?.name || 'No disease detected'} 
-              />
-              <DetailRow label="Bark Texture" value={scan.trunkAnalysis?.texture} />
-              <DetailRow label="Bark Color" value={scan.trunkAnalysis?.color} isLast />
+              <LinearGradient
+                colors={['#3E2A1B', '#111827']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.analysisHero}
+              >
+                <Text style={styles.analysisHeroLabel}>Trunk Integrity Profile</Text>
+                <Text style={styles.analysisHeroValue}>{primaryDisease?.name || 'No disease detected'}</Text>
+              </LinearGradient>
+
+              <View style={styles.analysisMetricGrid}>
+                <AnalysisMetric label="Bark Texture" value={scan.trunkAnalysis?.texture || 'Unknown'} />
+                <AnalysisMetric label="Bark Color" value={scan.trunkAnalysis?.color || 'Unknown'} />
+                <AnalysisMetric label="Severity" value={(primaryDisease?.severity || 'none').toUpperCase()} />
+                <AnalysisMetric label="Confidence" value={formatWholePercent(primaryDisease?.confidence)} />
+              </View>
             </InfoCard>
           )}
 
           {/* 3. Disease Detection */}
           <InfoCard title="Disease Detection" icon="healing">
-            {scan.diseaseDetection && scan.diseaseDetection.length > 0 ? (
-              scan.diseaseDetection.map((rawDisease, index) => {
-                const disease = normalizeDiseaseForDisplay(rawDisease);
+            {actionableDiseaseDetections.length > 0 ? (
+              actionableDiseaseDetections.map((disease, index) => {
                 return (
                 <View key={index} style={styles.diseaseItem}>
                   <View style={styles.diseaseHeader}>
                     <View>
                       <Text style={styles.diseaseName}>{disease.name}</Text>
                       <Text style={{ fontSize: 12, color: '#888' }}>
-                        Confidence: {typeof disease.confidence === 'number' ? disease.confidence.toFixed(1) : disease.confidence}%
+                        Confidence: {formatWholePercent(disease.confidence)}
                       </Text>
                     </View>
                     <View style={[styles.severityBadge, { 
@@ -459,20 +590,32 @@ const ScanDetailScreen = ({ route, navigation }) => {
                         {typeof disease.ai_diagnosis === 'object' ? (
                             <View>
                                 {disease.ai_diagnosis.diagnosis && (
-                                    <Text style={styles.diseaseRec}><Text style={{fontWeight: 'bold'}}>Diagnosis:</Text> {disease.ai_diagnosis.diagnosis}</Text>
+                                    <View style={{ marginBottom: 8 }}>
+                                      <Text style={styles.diseaseRecTitle}>Diagnosis:</Text>
+                                      {renderBulletedContent(disease.ai_diagnosis.diagnosis, 'insights', theme.colors.primary)}
+                                    </View>
                                 )}
                                 {disease.ai_diagnosis.severity_reasoning && (
-                                    <Text style={styles.diseaseRec}><Text style={{fontWeight: 'bold'}}>Severity:</Text> {disease.ai_diagnosis.severity_reasoning}</Text>
+                                    <View style={{ marginBottom: 8 }}>
+                                      <Text style={styles.diseaseRecTitle}>Severity:</Text>
+                                      {renderBulletedContent(disease.ai_diagnosis.severity_reasoning, 'priority-high', theme.colors.warning)}
+                                    </View>
                                 )}
                                 {disease.ai_diagnosis.treatment && (
-                                    <Text style={styles.diseaseRec}><Text style={{fontWeight: 'bold'}}>Treatment:</Text> {renderContent(disease.ai_diagnosis.treatment)}</Text>
+                                    <View style={{ marginBottom: 8 }}>
+                                      <Text style={styles.diseaseRecTitle}>Treatment:</Text>
+                                      {renderBulletedContent(disease.ai_diagnosis.treatment, 'medical-services', theme.colors.success)}
+                                    </View>
                                 )}
                                 {disease.ai_diagnosis.prevention && (
-                                    <Text style={styles.diseaseRec}><Text style={{fontWeight: 'bold'}}>Prevention:</Text> {renderContent(disease.ai_diagnosis.prevention)}</Text>
+                                    <View>
+                                      <Text style={styles.diseaseRecTitle}>Prevention:</Text>
+                                      {renderBulletedContent(disease.ai_diagnosis.prevention, 'verified-user', theme.colors.secondary)}
+                                    </View>
                                 )}
                             </View>
                         ) : (
-                            <Text style={styles.diseaseRec}>{disease.ai_diagnosis}</Text>
+                            renderBulletedContent(disease.ai_diagnosis, 'insights', theme.colors.primary)
                         )}
                     </View>
                   )}
@@ -481,7 +624,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                   {disease.cause && (
                     <View style={{ marginBottom: 10 }}>
                         <Text style={styles.diseaseRecTitle}>Cause:</Text>
-                        <Text style={styles.diseaseRec}>{disease.cause}</Text>
+                        {renderBulletedContent(disease.cause, 'science', theme.colors.warning)}
                     </View>
                   )}
 
@@ -489,16 +632,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                   {disease.prevention && (
                      <View style={{ marginBottom: 10 }}>
                         <Text style={styles.diseaseRecTitle}>Prevention:</Text>
-                        {Array.isArray(disease.prevention) ? (
-                            disease.prevention.map((p, i) => (
-                                <View key={i} style={styles.bulletPoint}>
-                                    <MaterialIcons name="chevron-right" size={14} color={theme.colors.textSecondary} />
-                                    <Text style={styles.bulletText}>{p}</Text>
-                                </View>
-                            ))
-                        ) : (
-                            <Text style={styles.diseaseRec}>{disease.prevention}</Text>
-                        )}
+                        {renderBulletedContent(disease.prevention, 'verified-user', theme.colors.secondary)}
                      </View>
                   )}
 
@@ -506,21 +640,12 @@ const ScanDetailScreen = ({ route, navigation }) => {
                   {disease.treatment && (
                      <View style={{ marginBottom: 10 }}>
                         <Text style={styles.diseaseRecTitle}>Treatment:</Text>
-                        {Array.isArray(disease.treatment) ? (
-                            disease.treatment.map((t, i) => (
-                                <View key={i} style={styles.bulletPoint}>
-                                    <MaterialIcons name="chevron-right" size={14} color={theme.colors.textSecondary} />
-                                    <Text style={styles.bulletText}>{t}</Text>
-                                </View>
-                            ))
-                        ) : (
-                            <Text style={styles.diseaseRec}>{disease.treatment}</Text>
-                        )}
+                        {renderBulletedContent(disease.treatment, 'medical-services', theme.colors.success)}
                      </View>
                   )}
 
                   <Text style={styles.diseaseRecTitle}>Recommendation:</Text>
-                  <Text style={styles.diseaseRec}>{disease.recommendation}</Text>
+                  {renderBulletedContent(disease.recommendation, 'auto-awesome', theme.colors.primary)}
                 </View>
               )})
             ) : (
@@ -588,12 +713,12 @@ const ScanDetailScreen = ({ route, navigation }) => {
                   <InfoCard title="Processing Advice" icon="science">
                       <View style={{ marginBottom: 10 }}>
                           <Text style={styles.detailLabel}>Recommendation:</Text>
-                          <Text style={styles.diseaseRec}>{scan.productRecommendation.reason}</Text>
+                          {renderBulletedContent(scan.productRecommendation.reason, 'auto-awesome', theme.colors.primary)}
                       </View>
                       {scan.productRecommendation.preservation && (
                           <View>
                               <Text style={styles.detailLabel}>Preservation:</Text>
-                              <Text style={styles.diseaseRec}>{scan.productRecommendation.preservation}</Text>
+                              {renderBulletedContent(scan.productRecommendation.preservation, 'verified-user', theme.colors.secondary)}
                           </View>
                       )}
                   </InfoCard>
@@ -620,12 +745,7 @@ const ScanDetailScreen = ({ route, navigation }) => {
                  {scan.aiInsights.suggestions && scan.aiInsights.suggestions.length > 0 && (
                      <View style={{ marginBottom: 15 }}>
                          <Text style={styles.detailLabel}>Suggestions:</Text>
-                         {scan.aiInsights.suggestions.map((s, i) => (
-                             <View key={i} style={styles.bulletPoint}>
-                                 <MaterialIcons name="lightbulb-outline" size={16} color={theme.colors.warning} />
-                                 <Text style={styles.bulletText}>{s}</Text>
-                             </View>
-                         ))}
+                         {renderBulletedContent(scan.aiInsights.suggestions, 'lightbulb-outline', theme.colors.warning)}
                      </View>
                  )}
                  
@@ -659,12 +779,13 @@ const ScanDetailScreen = ({ route, navigation }) => {
               <DetailRow label="Status" value={scan.productivityRecommendation?.status?.replace('_', ' ').toUpperCase()} />
               <View style={{ marginTop: 10 }}>
                 <Text style={styles.detailLabel}>Suggestions:</Text>
-                {scan.productivityRecommendation?.suggestions?.map((suggestion, index) => (
-                  <View key={index} style={styles.bulletPoint}>
-                    <MaterialIcons name="chevron-right" size={16} color={theme.colors.primary} />
-                    <Text style={styles.bulletText}>{suggestion}</Text>
-                  </View>
-                ))}
+                {renderBulletedContent(
+                  scan.productivityRecommendation?.suggestions ||
+                    scan.productivityRecommendation?.recommendation ||
+                    scan.productivityRecommendation?.reason,
+                  'chevron-right',
+                  theme.colors.primary
+                )}
               </View>
             </InfoCard>
            )}
@@ -837,6 +958,56 @@ const styles = StyleSheet.create({
   cardContent: {
     paddingLeft: 4,
   },
+  analysisHero: {
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 14,
+  },
+  analysisHeroLabel: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  analysisHeroValue: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  analysisMetricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -4,
+  },
+  analysisMetricCard: {
+    width: '50%',
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  analysisMetricLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  analysisMetricValue: {
+    fontSize: 14,
+    color: '#0F172A',
+    fontWeight: '700',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  analysisSection: {
+    marginTop: 10,
+  },
   detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -937,6 +1108,15 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginTop: 6,
   },
+  recommendationBullet: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 6,
+  },
+  recommendationBulletIcon: {
+    marginTop: 2,
+    marginRight: 6,
+  },
   bulletText: {
     fontSize: 14,
     color: theme.colors.textSecondary,
@@ -985,3 +1165,4 @@ const styles = StyleSheet.create({
 });
 
 export default ScanDetailScreen;
+

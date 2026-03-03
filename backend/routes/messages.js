@@ -29,6 +29,75 @@ const uploadAttachments = async (files, folder) => {
 
 const normalizeObjectId = (val) => String(val?._id || val || '');
 
+const normalizeProfileImage = (user) => {
+  if (!user || typeof user !== 'object') return null;
+  return user.profileImage || user.avatar?.url || user.profilePicture?.url || null;
+};
+
+const normalizeUser = (user) => {
+  if (!user) return null;
+  if (typeof user !== 'object') {
+    return { _id: user, name: 'User', profileImage: null };
+  }
+
+  return {
+    ...user,
+    _id: user._id || user.id,
+    profileImage: normalizeProfileImage(user),
+  };
+};
+
+const normalizeRequestStatus = (msg) => {
+  if (['accepted', 'pending', 'rejected'].includes(msg?.requestStatus)) {
+    return msg.requestStatus;
+  }
+
+  const status = String(msg?.status || '').toLowerCase();
+  if (status === 'rejected') return 'rejected';
+  if (status === 'pending') return 'pending';
+  if (msg?.isRequest === true && status !== 'accepted') return 'pending';
+
+  return 'accepted';
+};
+
+const normalizeMessage = (msg) => {
+  const sender = normalizeUser(msg?.sender);
+  const receiver = normalizeUser(msg?.receiver || msg?.recipient);
+  const requestStatus = normalizeRequestStatus(msg);
+  const rawText = (typeof msg?.text === 'string' && msg.text.length > 0)
+    ? msg.text
+    : (msg?.content || '');
+  const isDeleted = Boolean(msg?.isDeleted);
+  const text = isDeleted ? 'This message was deleted' : rawText;
+
+  return {
+    ...msg,
+    sender,
+    receiver,
+    recipient: receiver,
+    text,
+    content: text,
+    attachments: isDeleted ? [] : (Array.isArray(msg?.attachments) ? msg.attachments : []),
+    isDeleted,
+    deletedAt: msg?.deletedAt || null,
+    deletedBy: msg?.deletedBy || null,
+    requestStatus,
+    status: msg?.status || (requestStatus === 'pending' ? 'pending' : 'sent'),
+    isRequest: typeof msg?.isRequest === 'boolean' ? msg.isRequest : requestStatus === 'pending',
+    read: !!msg?.isRead,
+  };
+};
+
+const isVisibleToUser = (msg, userId) => {
+  const currentId = String(userId);
+  const senderId = normalizeObjectId(msg?.sender);
+  const receiverId = normalizeObjectId(msg?.receiver || msg?.recipient);
+
+  if (senderId === currentId && msg?.isDeletedBySender) return false;
+  if (receiverId === currentId && msg?.isDeletedByRecipient) return false;
+  return true;
+};
+
 const isBlockedBetweenUsers = (currentUser, otherUser, currentUserId, otherUserId) => {
   const blockedByCurrent = Array.isArray(currentUser?.blockedUsers)
     && currentUser.blockedUsers.some(id => normalizeObjectId(id) === String(otherUserId));
@@ -37,14 +106,46 @@ const isBlockedBetweenUsers = (currentUser, otherUser, currentUserId, otherUserI
   return { blockedByCurrent, blockedCurrent };
 };
 
+const getConversationQuery = (userA, userB) => ({
+  $or: [
+    {
+      sender: userA,
+      $or: [{ receiver: userB }, { recipient: userB }]
+    },
+    {
+      sender: userB,
+      $or: [{ receiver: userA }, { recipient: userA }]
+    }
+  ]
+});
+
+const fetchConversationMessages = async (userA, userB) => {
+  return Message.find(getConversationQuery(userA, userB))
+    .sort({ createdAt: 1 })
+    .populate('sender', 'name profileImage avatar profilePicture')
+    .populate('receiver', 'name profileImage avatar profilePicture')
+    .populate('recipient', 'name profileImage avatar profilePicture')
+    .lean();
+};
+
+const getReceiverIdFromBody = (body = {}) => {
+  return body.receiverId || body.recipientId || null;
+};
+
+const getTextFromBody = (body = {}) => {
+  if (typeof body.text === 'string') return body.text;
+  if (typeof body.content === 'string') return body.content;
+  return '';
+};
+
 // @route   POST /api/messages
 // @desc    Send a message
 // @access  Private
-router.post('/', protect, upload.array('files', 10), async (req, res) => {
+const sendMessageHandler = async (req, res) => {
   try {
-    const { receiverId, text } = req.body;
-    
-    // Check if there are files or text
+    const receiverId = getReceiverIdFromBody(req.body);
+    const text = getTextFromBody(req.body);
+
     if (!receiverId || (!text && (!req.files || req.files.length === 0))) {
       return res.status(400).json({ error: 'Receiver and content (text or files) are required' });
     }
@@ -70,22 +171,10 @@ router.post('/', protect, upload.array('files', 10), async (req, res) => {
       return res.status(403).json({ error: 'You cannot message this user.' });
     }
 
-    const hasAcceptedConversation = await Message.exists({
-      $and: [
-        {
-          $or: [
-            { sender: req.user.id, receiver: receiverId },
-            { sender: receiverId, receiver: req.user.id }
-          ]
-        },
-        {
-          $or: [
-            { requestStatus: 'accepted' },
-            { requestStatus: { $exists: false } }
-          ]
-        }
-      ]
-    });
+    const thread = await fetchConversationMessages(req.user.id, receiverId);
+    const hasAcceptedConversation = thread
+      .filter(msg => isVisibleToUser(msg, req.user.id) || isVisibleToUser(msg, receiverId))
+      .some(msg => normalizeRequestStatus(msg) === 'accepted');
 
     const senderFollowsReceiver = Array.isArray(senderUser.following)
       && senderUser.following.some(id => String(id) === String(receiverId));
@@ -97,25 +186,28 @@ router.post('/', protect, upload.array('files', 10), async (req, res) => {
 
     let attachmentsData = [];
     if (req.files && req.files.length > 0) {
-       attachmentsData = await uploadAttachments(req.files, 'rubbersense/messages');
+      attachmentsData = await uploadAttachments(req.files, 'rubbersense/messages');
     }
 
     const newMessage = new Message({
       sender: req.user.id,
       receiver: receiverId,
+      recipient: receiverId,
       text: text || '',
+      content: text || '',
       attachments: attachmentsData,
-      requestStatus
+      requestStatus,
+      status: requestStatus === 'pending' ? 'pending' : 'sent',
+      isRequest: requestStatus === 'pending'
     });
 
     const savedMessage = await newMessage.save();
-    
-    // Populate sender info for immediate display
-    await savedMessage.populate('sender', 'name profileImage');
-    await savedMessage.populate('receiver', 'name profileImage');
+
+    await savedMessage.populate('sender', 'name profileImage avatar profilePicture');
+    await savedMessage.populate('receiver', 'name profileImage avatar profilePicture');
 
     const payload = {
-      ...savedMessage.toObject(),
+      ...normalizeMessage(savedMessage.toObject()),
       isRequestPending: requestStatus === 'pending'
     };
 
@@ -135,84 +227,67 @@ router.post('/', protect, upload.array('files', 10), async (req, res) => {
     console.error('Send message error:', error);
     res.status(500).json({ error: 'Server error' });
   }
-});
+};
+
+router.post('/', protect, upload.array('files', 10), sendMessageHandler);
+router.post('/send', protect, upload.array('files', 10), sendMessageHandler);
 
 // @route   GET /api/messages/conversations
 // @desc    Get list of conversations (users communicated with)
 // @access  Private
 router.get('/conversations', protect, async (req, res) => {
   try {
-    const currentUserId = req.user.id;
-    const currentUserObjId = new mongoose.Types.ObjectId(currentUserId);
+    const currentUserId = String(req.user.id);
 
-    // Aggregate to find unique conversation partners and last message
-    const conversations = await Message.aggregate([
-      {
-        $match: {
-          $and: [
-            {
-              $or: [
-                { sender: currentUserObjId },
-                { receiver: currentUserObjId }
-              ]
-            },
-            {
-              $or: [
-                { requestStatus: { $exists: false } },
-                { requestStatus: { $ne: 'rejected' } }
-              ]
-            },
-            {
-              $or: [
-                { receiver: { $ne: currentUserObjId } },
-                { requestStatus: { $ne: 'pending' } }
-              ]
-            }
-          ]
-        }
-      },
-      {
-        $sort: { createdAt: -1 }
-      },
-      {
-        $group: {
-          _id: {
-            $cond: [
-              { $eq: ['$sender', currentUserObjId] },
-              '$receiver',
-              '$sender'
-            ]
-          },
-          lastMessage: { $first: '$$ROOT' }
-        }
-      },
-      {
-        $lookup: {
-          from: 'users',
-          localField: '_id',
-          foreignField: '_id',
-          as: 'user'
-        }
-      },
-      {
-        $unwind: '$user'
-      },
-      {
-        $project: {
-          'user.password': 0,
-          'user.verificationToken': 0,
-          'user.blockedUsers': 0
-        }
-      },
-      {
-        $sort: { 'lastMessage.createdAt': -1 }
+    const rawMessages = await Message.find({
+      $or: [
+        { sender: req.user.id },
+        { receiver: req.user.id },
+        { recipient: req.user.id }
+      ]
+    })
+      .sort({ createdAt: -1 })
+      .populate('sender', 'name profileImage avatar profilePicture')
+      .populate('receiver', 'name profileImage avatar profilePicture')
+      .populate('recipient', 'name profileImage avatar profilePicture')
+      .lean();
+
+    const conversations = new Map();
+
+    for (const msg of rawMessages) {
+      const normalized = normalizeMessage(msg);
+      if (!isVisibleToUser(normalized, currentUserId)) continue;
+      if (normalized.requestStatus === 'rejected') continue;
+
+      const senderId = normalizeObjectId(normalized.sender);
+      const receiverId = normalizeObjectId(normalized.receiver);
+      const isIncomingPending = receiverId === currentUserId && normalized.requestStatus === 'pending';
+
+      // Keep pending incoming messages in message requests, not in normal conversations list.
+      if (isIncomingPending) continue;
+
+      const otherUser = senderId === currentUserId ? normalized.receiver : normalized.sender;
+      const otherUserId = normalizeObjectId(otherUser);
+      if (!otherUserId) continue;
+
+      if (!conversations.has(otherUserId)) {
+        conversations.set(otherUserId, {
+          _id: otherUserId,
+          user: otherUser,
+          lastMessage: normalized
+        });
       }
-    ]);
+    }
 
-    res.json(conversations);
+    const list = Array.from(conversations.values()).sort((a, b) => {
+      const da = new Date(a.lastMessage?.createdAt || 0).getTime();
+      const db = new Date(b.lastMessage?.createdAt || 0).getTime();
+      return db - da;
+    });
+
+    res.json(list);
   } catch (error) {
     console.error('Get conversations error:', error);
-    // Fallback: simple distinct if aggregation fails (or just return empty)
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -222,42 +297,52 @@ router.get('/conversations', protect, async (req, res) => {
 // @access  Private
 router.get('/requests', protect, async (req, res) => {
   try {
-    const currentUserId = req.user.id;
-    const currentUserObjId = new mongoose.Types.ObjectId(currentUserId);
+    const currentUserId = String(req.user.id);
 
-    const requests = await Message.aggregate([
-      {
-        $match: {
-          receiver: currentUserObjId,
-          requestStatus: 'pending'
-        }
-      },
-      { $sort: { createdAt: -1 } },
-      {
-        $group: {
-          _id: '$sender',
-          lastMessage: { $first: '$$ROOT' },
-          pendingCount: { $sum: 1 }
-        }
-      },
-      {
-        $lookup: {
-          from: 'users',
-          localField: '_id',
-          foreignField: '_id',
-          as: 'user'
-        }
-      },
-      { $unwind: '$user' },
-      {
-        $project: {
-          'user.password': 0,
-          'user.verificationToken': 0,
-          'user.blockedUsers': 0
-        }
-      },
-      { $sort: { 'lastMessage.createdAt': -1 } }
-    ]);
+    const rawMessages = await Message.find({
+      sender: { $ne: req.user.id },
+      $or: [
+        { receiver: req.user.id },
+        { recipient: req.user.id }
+      ]
+    })
+      .sort({ createdAt: -1 })
+      .populate('sender', 'name profileImage avatar profilePicture')
+      .populate('receiver', 'name profileImage avatar profilePicture')
+      .populate('recipient', 'name profileImage avatar profilePicture')
+      .lean();
+
+    const grouped = new Map();
+
+    for (const msg of rawMessages) {
+      const normalized = normalizeMessage(msg);
+      if (!isVisibleToUser(normalized, currentUserId)) continue;
+      if (normalized.requestStatus !== 'pending') continue;
+
+      const receiverId = normalizeObjectId(normalized.receiver);
+      if (receiverId !== currentUserId) continue;
+
+      const sender = normalized.sender;
+      const senderId = normalizeObjectId(sender);
+      if (!senderId) continue;
+
+      if (!grouped.has(senderId)) {
+        grouped.set(senderId, {
+          _id: senderId,
+          user: sender,
+          lastMessage: normalized,
+          pendingCount: 1
+        });
+      } else {
+        grouped.get(senderId).pendingCount += 1;
+      }
+    }
+
+    const requests = Array.from(grouped.values()).sort((a, b) => {
+      const da = new Date(a.lastMessage?.createdAt || 0).getTime();
+      const db = new Date(b.lastMessage?.createdAt || 0).getTime();
+      return db - da;
+    });
 
     res.json({ success: true, data: requests });
   } catch (error) {
@@ -309,26 +394,24 @@ router.get('/status/:userId', protect, async (req, res) => {
       });
     }
 
-    const [pendingIncoming, pendingOutgoing, acceptedConversation] = await Promise.all([
-      Message.exists({ sender: otherUserId, receiver: currentUserId, requestStatus: 'pending' }),
-      Message.exists({ sender: currentUserId, receiver: otherUserId, requestStatus: 'pending' }),
-      Message.exists({
-        $and: [
-          {
-            $or: [
-              { sender: currentUserId, receiver: otherUserId },
-              { sender: otherUserId, receiver: currentUserId }
-            ]
-          },
-          {
-            $or: [
-              { requestStatus: 'accepted' },
-              { requestStatus: { $exists: false } }
-            ]
-          }
-        ]
-      })
-    ]);
+    const thread = await fetchConversationMessages(currentUserId, otherUserId);
+    const visible = thread.filter(msg => isVisibleToUser(msg, currentUserId));
+
+    const pendingIncoming = visible.some(msg => {
+      const normalized = normalizeMessage(msg);
+      return normalizeObjectId(normalized.sender) === String(otherUserId)
+        && normalizeObjectId(normalized.receiver) === String(currentUserId)
+        && normalized.requestStatus === 'pending';
+    });
+
+    const pendingOutgoing = visible.some(msg => {
+      const normalized = normalizeMessage(msg);
+      return normalizeObjectId(normalized.sender) === String(currentUserId)
+        && normalizeObjectId(normalized.receiver) === String(otherUserId)
+        && normalized.requestStatus === 'pending';
+    });
+
+    const acceptedConversation = visible.some(msg => normalizeMessage(msg).requestStatus === 'accepted');
 
     let status = 'none';
     if (pendingIncoming) status = 'pending_incoming';
@@ -362,17 +445,27 @@ router.put('/requests/:senderId', protect, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid action' });
     }
 
-    const filter = {
+    const candidateMessages = await Message.find({
       sender: senderId,
-      receiver: req.user.id,
-      requestStatus: 'pending'
-    };
+      $or: [
+        { receiver: req.user.id },
+        { recipient: req.user.id }
+      ]
+    }).select('_id sender receiver recipient requestStatus status isRequest').lean();
+
+    const targetIds = candidateMessages
+      .filter(msg => normalizeRequestStatus(msg) === 'pending')
+      .map(msg => msg._id);
+
+    if (targetIds.length === 0) {
+      return res.json({ success: true, action, updatedCount: 0 });
+    }
 
     const update = action === 'accept'
-      ? { $set: { requestStatus: 'accepted' } }
-      : { $set: { requestStatus: 'rejected' } };
+      ? { $set: { requestStatus: 'accepted', status: 'accepted', isRequest: false } }
+      : { $set: { requestStatus: 'rejected', status: 'rejected' } };
 
-    const result = await Message.updateMany(filter, update);
+    const result = await Message.updateMany({ _id: { $in: targetIds } }, update);
 
     const payload = {
       senderId,
@@ -381,6 +474,7 @@ router.put('/requests/:senderId', protect, async (req, res) => {
       status: action === 'accept' ? 'accepted' : 'rejected',
       updatedCount: result.modifiedCount || 0,
     };
+
     emitToUser(senderId, 'message:request-updated', payload);
     emitToUser(req.user.id, 'message:request-updated', payload);
 
@@ -391,6 +485,87 @@ router.put('/requests/:senderId', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Respond to message request error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// @route   DELETE /api/messages/:messageId
+// @desc    Delete message (sender: delete for everyone, receiver: delete for me)
+// @access  Private
+router.delete('/:messageId', protect, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(messageId)) {
+      return res.status(400).json({ success: false, error: 'Invalid message id' });
+    }
+
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({ success: false, error: 'Message not found' });
+    }
+
+    const currentUserId = String(req.user.id);
+    const senderId = normalizeObjectId(message.sender);
+    const receiverId = normalizeObjectId(message.receiver || message.recipient);
+
+    const isParticipant = senderId === currentUserId || receiverId === currentUserId;
+    if (!isParticipant) {
+      return res.status(403).json({ success: false, error: 'Not allowed to delete this message' });
+    }
+
+    const isSenderDeletingOwnMessage = senderId === currentUserId;
+    if (isSenderDeletingOwnMessage) {
+      if (!message.isDeleted) {
+        message.isDeleted = true;
+        message.deletedAt = new Date();
+        message.deletedBy = req.user.id;
+        message.text = '';
+        message.content = '';
+        message.attachments = [];
+      }
+
+      // Keep globally deleted message visible for both participants.
+      message.isDeletedBySender = false;
+      message.isDeletedByRecipient = false;
+      await message.save();
+
+      const payload = {
+        messageId: String(message._id),
+        deletedForEveryone: true,
+        text: 'This message was deleted',
+        deletedAt: message.deletedAt,
+      };
+
+      emitToUser(senderId, 'message:deleted', payload);
+      if (receiverId) {
+        emitToUser(receiverId, 'message:deleted', payload);
+      }
+
+      return res.json({
+        success: true,
+        data: payload
+      });
+    }
+
+    if (receiverId === currentUserId) {
+      message.isDeletedByRecipient = true;
+      await message.save();
+    }
+
+    emitToUser(currentUserId, 'message:deleted', {
+      messageId: String(message._id),
+      deletedForMe: true
+    });
+
+    res.json({
+      success: true,
+      data: {
+        messageId: String(message._id),
+        deletedForMe: true
+      }
+    });
+  } catch (error) {
+    console.error('Delete message error:', error);
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });
@@ -406,31 +581,22 @@ router.get('/:userId', protect, async (req, res) => {
     await Message.updateMany(
       {
         sender: userId,
-        receiver: currentUserId,
+        $or: [
+          { receiver: currentUserId },
+          { recipient: currentUserId }
+        ],
         isRead: false
       },
       { $set: { isRead: true } }
     );
 
-    const messages = await Message.find({
-      $and: [
-        {
-          $or: [
-            { sender: currentUserId, receiver: userId },
-            { sender: userId, receiver: currentUserId }
-          ]
-        },
-        {
-          $or: [
-            { requestStatus: { $exists: false } },
-            { requestStatus: { $ne: 'rejected' } }
-          ]
-        }
-      ]
-    })
-    .sort({ createdAt: 1 }) // Oldest first
-    .populate('sender', 'name profileImage')
-    .populate('receiver', 'name profileImage');
+    const rawMessages = await fetchConversationMessages(currentUserId, userId);
+
+    const messages = rawMessages
+      .filter(msg => isVisibleToUser(msg, currentUserId))
+      .map(normalizeMessage)
+      .filter(msg => msg.requestStatus !== 'rejected')
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
     res.json(messages);
   } catch (error) {

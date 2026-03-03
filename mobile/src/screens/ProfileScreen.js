@@ -20,7 +20,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons, Ionicons, FontAwesome5, Feather } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useAppRefresh } from '../context/AppRefreshContext';
-import { scanAPI, latexAPI, treeAPI, postAPI, authAPI, userAPI } from '../services/api';
+import { scanAPI, latexAPI, treeAPI, postAPI, authAPI, userAPI, resolveUserProfileImage } from '../services/api';
 import theme from '../styles/theme';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -48,35 +48,42 @@ const TEAM_MEMBERS = [
     name: "Prof. Pops Madriaga",
     role: "Project Advisor",
     bio: "Guiding the intersection of agriculture and technology.",
-    image: "https://ui-avatars.com/api/?name=Pops+Madriaga&background=556B2F&color=fff&size=200"
+    image: require('../../assets/images/logo/logo.png')
   },
   {
     id: 'lead',
     name: "Allan Monforte",
-    role: "Lead Developer",
-    bio: "Passionate about creating intuitive user experiences.",
-    image: "https://ui-avatars.com/api/?name=Allan+Monforte&background=8FBC8F&color=fff&size=400"
+    role: "Mobile Developer",
+    bio: "Building mobile experiences that connect farmers to smart solutions.",
+    image: require('../../assets/images/student/allan/Allan.jpg')
   },
   {
     id: '2',
-    name: "Dwayne Casay",
-    role: "Developer",
-    bio: "Backend architecture & data integration.",
-    image: "https://ui-avatars.com/api/?name=Dwayne+Casay&background=8FBC8F&color=fff&size=200"
+    name: "Dwayne Casey",
+    role: "Web Developer",
+    bio: "Backend architecture & data integration for seamless connectivity.",
+    image: require('../../assets/images/student/dwayne/Dwayne.png')
   },
   {
     id: '3',
     name: "Thea Arnado",
-    role: "UI/UX Design",
-    bio: "Making technology accessible to everyone.",
-    image: "https://ui-avatars.com/api/?name=Thea+Arnado&background=8FBC8F&color=fff&size=200"
+    role: "UX/UI Designer",
+    bio: "Creating intuitive and accessible interfaces for all users.",
+    image: require('../../assets/images/student/thea/Thea.jpg')
   },
   {
     id: '4',
     name: "Lance David",
-    role: "Developer",
-    bio: "Quality assurance & performance optimization.",
-    image: "https://ui-avatars.com/api/?name=Lance+David&background=8FBC8F&color=fff&size=200"
+    role: "Dataset Developer & ML Trainer",
+    bio: "Building intelligent models that power accurate crop diagnostics.",
+    image: require('../../assets/images/student/david/David.jpg')
+  },
+  {
+    id: '5',
+    name: "The Team",
+    role: "RubberSense Contributors",
+    bio: "Collaborative effort to revolutionize rubber farming through intelligent technology.",
+    image: require('../../assets/images/student/whole team/Whole team.jpg')
   }
 ];
 
@@ -97,6 +104,26 @@ const ProfileScreen = ({ navigation, route }) => {
   
   const scrollY = useRef(new Animated.Value(0)).current;
 
+  const getFollowersCount = (targetUser) => {
+    const direct = targetUser?.followersCount;
+    if (typeof direct === 'number') return direct;
+    if (typeof direct === 'string' && !Number.isNaN(Number(direct))) return Number(direct);
+
+    const statsTotal = targetUser?.stats?.totalFollowers;
+    if (typeof statsTotal === 'number') return statsTotal;
+    if (typeof statsTotal === 'string' && !Number.isNaN(Number(statsTotal))) return Number(statsTotal);
+
+    const statsFallback = targetUser?.stats?.followers;
+    if (typeof statsFallback === 'number') return statsFallback;
+    if (typeof statsFallback === 'string' && !Number.isNaN(Number(statsFallback))) return Number(statsFallback);
+
+    return Array.isArray(targetUser?.followers) ? targetUser.followers.length : 0;
+  };
+
+  const extractUserPayload = (payload) => {
+    return payload?.user || payload?.data?.user || payload?.data || null;
+  };
+
   useFocusEffect(
     useCallback(() => {
       fetchData();
@@ -104,33 +131,35 @@ const ProfileScreen = ({ navigation, route }) => {
         setShowAboutModal(true);
         navigation.setParams({ showAbout: false });
       }
-    }, [route.params?.userId, route.params?.showAbout])
+    }, [route.params?.userId, route.params?.showAbout, user?._id, user?.id, user?.userId])
   );
 
   const fetchData = async () => {
     try {
       const targetUserId = route.params?.userId;
-      const isOther = targetUserId && targetUserId !== user._id;
+      const myUserId = user?._id || user?.id || user?.userId;
+      const isOther = targetUserId && String(targetUserId) !== String(myUserId);
       setIsOtherUser(isOther);
 
       if (isOther) {
         const userRes = await userAPI.getProfile(targetUserId);
-        const userData = userRes.data;
+        const userData = userRes?.data || userRes;
         setProfileData(userData);
         setIsFollowing(userData.isFollowing);
         setScanCount(userData.stats?.scans || 0);
         setTreeCount(userData.stats?.trees || 0);
         setPostCount(userData.stats?.posts || 0);
       } else {
+        const meRequest = myUserId ? userAPI.getProfile(myUserId) : authAPI.getMe();
         const [scansRes, latexRes, treesRes, postsRes, meRes] = await Promise.all([
           scanAPI.getAll(),
           latexAPI.getAll(),
           treeAPI.getAll(),
           postAPI.getMyPosts(),
-          authAPI.getMe(),
+          meRequest,
         ]);
         
-        const myData = meRes?.data?.user;
+        const myData = myUserId ? (meRes?.data || meRes) : extractUserPayload(meRes);
         setProfileData(myData);
         setIsOtherUser(false);
 
@@ -149,25 +178,47 @@ const ProfileScreen = ({ navigation, route }) => {
   const handleFollow = async () => {
     try {
       const willBeFollowing = !isFollowing;
+      const currentUserId = user?._id || user?.id || user?.userId;
       setIsFollowing(willBeFollowing);
       
       setProfileData(prev => {
         let updatedFollowers = [...(prev.followers || [])];
         if (willBeFollowing) {
-          if (!updatedFollowers.some(f => String(f._id || f) === String(user._id))) {
+          if (!updatedFollowers.some(f => String(f._id || f) === String(currentUserId))) {
             updatedFollowers.push(user);
           }
         } else {
-          updatedFollowers = updatedFollowers.filter(f => String(f._id || f) !== String(user._id));
+          updatedFollowers = updatedFollowers.filter(f => String(f._id || f) !== String(currentUserId));
         }
         return { ...prev, followers: updatedFollowers };
       });
 
-      await userAPI.toggleFollow(profileData._id);
+      const targetUserId = profileData?._id || profileData?.id || route.params?.userId;
+      if (!targetUserId) {
+        throw new Error('Missing target user id');
+      }
+      const followRes = await userAPI.toggleFollow(targetUserId);
+      const confirmedIsFollowing =
+        typeof followRes?.isFollowing === 'boolean' ? followRes.isFollowing : willBeFollowing;
+      setIsFollowing(confirmedIsFollowing);
       
-      const updated = await authAPI.getMe().then(res => res.data.user);
-      if (!isOtherUser && updated) {
-        setProfileData(updated);
+      if (isOtherUser) {
+        // Re-fetch target profile to keep follower lists/counts in sync with web.
+        const refreshedRes = await userAPI.getProfile(targetUserId);
+        const refreshedUser = refreshedRes?.data || refreshedRes;
+        if (refreshedUser) {
+          setProfileData(refreshedUser);
+          if (typeof refreshedUser?.isFollowing === 'boolean') {
+            setIsFollowing(refreshedUser.isFollowing);
+          }
+        }
+      } else {
+        const updated = currentUserId
+          ? await userAPI.getProfile(currentUserId).then((res) => res?.data || res)
+          : await authAPI.getMe().then((res) => extractUserPayload(res));
+        if (updated) {
+          setProfileData(updated);
+        }
       }
     } catch (error) {
       console.log('Error toggling follow:', error);
@@ -180,7 +231,7 @@ const ProfileScreen = ({ navigation, route }) => {
     if (!isOtherUser && user) {
       setProfileData(user);
     }
-  }, [user?.followers?.length, user?.following?.length, isOtherUser]);
+  }, [user, isOtherUser]);
 
   useEffect(() => {
     if (refreshTick === 0) return;
@@ -203,26 +254,27 @@ const ProfileScreen = ({ navigation, route }) => {
     setShowListModal(true);
   };
 
-  const renderUserItem = ({ item }) => (
-    <TouchableOpacity 
-      style={styles.userListItem}
-      onPress={() => {
-        setShowListModal(false);
-        navigation.navigate('Main', { screen: 'Blog', params: { openProfileUserId: item._id } });
-      }}
-    >
-      <Image 
-        source={item.profileImage ? { uri: item.profileImage } : null} 
-        style={styles.listAvatar} 
-      />
-      {!item.profileImage && (
-        <View style={[styles.listAvatar, styles.listAvatarPlaceholder]}>
-          <Text style={styles.listAvatarText}>{(item.name || 'U').charAt(0)}</Text>
-        </View>
-      )}
-      <Text style={styles.listName}>{item.name}</Text>
-    </TouchableOpacity>
-  );
+  const renderUserItem = ({ item }) => {
+    const avatarUri = resolveUserProfileImage(item);
+    return (
+      <TouchableOpacity 
+        style={styles.userListItem}
+        onPress={() => {
+          setShowListModal(false);
+          navigation.navigate('Main', { screen: 'Blog', params: { openProfileUserId: item._id } });
+        }}
+      >
+        {avatarUri ? (
+          <Image source={{ uri: avatarUri }} style={styles.listAvatar} />
+        ) : (
+          <View style={[styles.listAvatar, styles.listAvatarPlaceholder]}>
+            <Text style={styles.listAvatarText}>{(item.name || 'U').charAt(0)}</Text>
+          </View>
+        )}
+        <Text style={styles.listName}>{item.name}</Text>
+      </TouchableOpacity>
+    );
+  };
 
   const renderTeamMember = ({ item }) => (
     <View style={styles.teamCard}>
@@ -273,6 +325,8 @@ const ProfileScreen = ({ navigation, route }) => {
     </TouchableOpacity>
   );
 
+  const profileAvatarUri = resolveUserProfileImage(profileData);
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
@@ -295,8 +349,8 @@ const ProfileScreen = ({ navigation, route }) => {
         {/* Profile Header */}
         <View style={styles.profileHeader}>
           <View style={styles.avatarContainer}>
-            {profileData?.profileImage ? (
-              <Image source={{ uri: profileData.profileImage }} style={styles.avatarImage} />
+            {profileAvatarUri ? (
+              <Image source={{ uri: profileAvatarUri }} style={styles.avatarImage} />
             ) : (
               <View style={styles.avatarPlaceholder}>
                 <Text style={styles.avatarText}>{(profileData?.name || 'U').charAt(0)}</Text>
@@ -335,7 +389,7 @@ const ProfileScreen = ({ navigation, route }) => {
           </View>
           <View style={styles.statDivider} />
           <TouchableOpacity style={styles.statItem} onPress={() => openList('followers')}>
-            <Text style={styles.statValue}>{(profileData?.followersCount ?? profileData?.followers?.length ?? 0)}</Text>
+            <Text style={styles.statValue}>{getFollowersCount(profileData)}</Text>
             <Text style={styles.statLabel}>FOLLOWERS</Text>
           </TouchableOpacity>
         </View>
@@ -425,6 +479,12 @@ const ProfileScreen = ({ navigation, route }) => {
               onPress={() => navigation.navigate('PrivacySecurity')}
             />
             <View style={styles.rowDivider} />
+            <SettingRow
+              icon="mail-open"
+              label="Contact Us"
+              onPress={() => navigation.navigate('ContactUs')}
+            />
+            <View style={styles.rowDivider} />
             <SettingRow 
               icon="information-circle" 
               label="About Us" 
@@ -490,7 +550,7 @@ const ProfileScreen = ({ navigation, route }) => {
               <View style={styles.visionMetaRow}>
                 <View>
                   <Text style={styles.metaLabel}>YEAR OF DEV</Text>
-                  <Text style={styles.metaValue}>2023-2024</Text>
+                  <Text style={styles.metaValue}>2025-2026</Text>
                 </View>
                 <View>
                   <Text style={styles.metaLabel}>PROJECT LEAD</Text>
@@ -499,10 +559,35 @@ const ProfileScreen = ({ navigation, route }) => {
               </View>
             </View>
 
+            {/* Mission Section */}
+            <View style={styles.missionSection}>
+              <Text style={styles.missionTitle}>The Mission</Text>
+              <View style={styles.missionList}>
+                <View style={styles.missionRow}>
+                  <View style={styles.missionDot} />
+                  <Text style={styles.missionText}>
+                    Deliver accurate, farmer-friendly AI diagnostics for tree and latex health.
+                  </Text>
+                </View>
+                <View style={styles.missionRow}>
+                  <View style={styles.missionDot} />
+                  <Text style={styles.missionText}>
+                    Transform raw field data into practical actions that improve productivity.
+                  </Text>
+                </View>
+                <View style={styles.missionRow}>
+                  <View style={styles.missionDot} />
+                  <Text style={styles.missionText}>
+                    Build a connected platform where farmers, experts, and market signals work together.
+                  </Text>
+                </View>
+              </View>
+            </View>
+
             {/* Team Section */}
             <View style={styles.teamSectionDark}>
               <View style={styles.teamHeaderRow}>
-                <Text style={styles.teamSectionTitleDark}>The Team</Text>
+                <Text style={styles.teamSectionTitleDark}>Meet the Whole Team</Text>
                 <View style={styles.teamDivider} />
                 <Text style={styles.contributorsLabel}>CONTRIBUTORS</Text>
               </View>
@@ -510,7 +595,7 @@ const ProfileScreen = ({ navigation, route }) => {
               {/* Advisor Card */}
               {TEAM_MEMBERS.filter(m => m.id === 'advisor').map(advisor => (
                 <View key={advisor.id} style={styles.advisorCard}>
-                  <Image source={{ uri: advisor.image }} style={styles.advisorImage} />
+                  <Image source={advisor.image} style={styles.advisorImage} />
                   <View style={styles.advisorContent}>
                     <Text style={styles.advisorRole}>PROJECT ADVISOR</Text>
                     <Text style={styles.advisorName}>{advisor.name}</Text>
@@ -525,7 +610,7 @@ const ProfileScreen = ({ navigation, route }) => {
                 <View style={styles.leadColumn}>
                   {TEAM_MEMBERS.filter(m => m.id === 'lead').map(lead => (
                     <View key={lead.id} style={styles.leadCard}>
-                      <Image source={{ uri: lead.image }} style={styles.leadImage} />
+                      <Image source={lead.image} style={styles.leadImage} />
                       <View style={styles.leadContent}>
                         <Text style={styles.leadName}>{lead.name}</Text>
                         <Text style={styles.leadRole}>{lead.role.toUpperCase()}</Text>
@@ -536,26 +621,38 @@ const ProfileScreen = ({ navigation, route }) => {
 
                 {/* Other Devs (Right Column) */}
                 <View style={styles.othersColumn}>
-                  {TEAM_MEMBERS.filter(m => m.id !== 'advisor' && m.id !== 'lead').map(member => (
+                  {TEAM_MEMBERS.filter(m => m.id !== 'advisor' && m.id !== 'lead' && m.id !== '5').map(member => (
                     <View key={member.id} style={styles.memberCard}>
-                      <View style={styles.memberIconBox}>
-                        <Ionicons name="person" size={16} color="#E2E8F0" />
-                      </View>
-                      <View>
-                        <Text style={styles.memberName}>{member.name}</Text>
-                        <Text style={styles.memberRole}>{member.role.toUpperCase()}</Text>
+                      <View style={styles.memberRow}>
+                        <Image source={member.image} style={styles.memberImage} />
+                        <View style={styles.memberTextWrap}>
+                          <Text style={styles.memberName}>{member.name}</Text>
+                          <Text style={styles.memberRole}>{member.role.toUpperCase()}</Text>
+                        </View>
                       </View>
                     </View>
                   ))}
                 </View>
               </View>
+
+              {/* Whole Team Section - Large Display */}
+              {TEAM_MEMBERS.filter(m => m.id === '5').map(team => (
+                <View key={team.id} style={styles.wholeTeamCard}>
+                  <Image source={team.image} style={styles.wholeTeamImage} resizeMode="contain" />
+                  <View style={styles.wholeTeamContent}>
+                    <Text style={styles.wholeTeamName}>{team.name}</Text>
+                    <Text style={styles.wholeTeamRole}>{team.role}</Text>
+                    <Text style={styles.wholeTeamBio}>{team.bio}</Text>
+                  </View>
+                </View>
+              ))}
             </View>
 
             {/* Footer */}
             <View style={styles.darkFooter}>
               <Text style={styles.footerBrand}>RubberSense</Text>
-              <Text style={styles.footerCopy}>CAPSTONE PROJECT © 2023</Text>
-              <Text style={styles.footerVer}>v2.4.0 (302)</Text>
+              <Text style={styles.footerCopy}>CAPSTONE PROJECT © 2026</Text>
+              <Text style={styles.footerVer}>v1.0.0 (302)</Text>
             </View>
 
           </ScrollView>
@@ -1053,6 +1150,38 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: '600',
   },
+  missionSection: {
+    paddingHorizontal: 24,
+    marginBottom: 36,
+  },
+  missionTitle: {
+    fontSize: 32,
+    color: '#8FBC8F',
+    marginBottom: 18,
+    fontWeight: '400',
+  },
+  missionList: {
+    gap: 14,
+  },
+  missionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  missionDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#8FBC8F',
+    marginTop: 8,
+    marginRight: 10,
+  },
+  missionText: {
+    flex: 1,
+    fontSize: 15,
+    color: '#E2E8F0',
+    lineHeight: 23,
+    opacity: 0.92,
+  },
 
   // Team
   teamSectionDark: {
@@ -1173,14 +1302,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     height: 114, // Half of lead card + gap approx
   },
-  memberIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(143, 188, 143, 0.1)',
-    justifyContent: 'center',
+  memberRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    gap: 12,
+  },
+  memberImage: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: 'rgba(143, 188, 143, 0.7)',
+    backgroundColor: '#2F3E1B',
+  },
+  memberTextWrap: {
+    flex: 1,
   },
   memberName: {
     fontSize: 14,
@@ -1215,6 +1351,45 @@ const styles = StyleSheet.create({
   footerVer: {
     fontSize: 9,
     color: '#8FBC8F',
+  },
+  wholeTeamCard: {
+    backgroundColor: 'rgba(58, 74, 30, 0.5)',
+    borderRadius: 20,
+    padding: 20,
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(143, 188, 143, 0.3)',
+    overflow: 'hidden',
+  },
+  wholeTeamImage: {
+    width: '100%',
+    height: 600,
+    borderRadius: 16,
+    marginBottom: 16,
+    backgroundColor: '#2F3E1B',
+  },
+  wholeTeamContent: {
+    alignItems: 'center',
+  },
+  wholeTeamName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#8FBC8F',
+    marginBottom: 8,
+    letterSpacing: 1,
+  },
+  wholeTeamRole: {
+    fontSize: 14,
+    color: '#B0C4B1',
+    marginBottom: 12,
+    letterSpacing: 2,
+    fontWeight: '600',
+  },
+  wholeTeamBio: {
+    fontSize: 14,
+    color: '#A0B4A0',
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });
 

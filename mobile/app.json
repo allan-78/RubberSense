@@ -6,9 +6,11 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "splash": {
+      "image": "./assets/images/logo/logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#10B981"
     },
+    "icon": "./assets/images/logo/logo.png",
     "assetBundlePatterns": [
       "**/*"
     ],

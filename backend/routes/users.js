@@ -5,11 +5,124 @@ const Post = require('../models/Post');
 const Tree = require('../models/Tree');
 const Scan = require('../models/Scan');
 const Message = require('../models/Message');
+const Notification = require('../models/Notification');
+const UserProfile = require('../models/UserProfile');
 const { emitToUser } = require('../socket');
 const { protect } = require('../middleware/auth');
 const fs = require('fs');
 const upload = require('../middleware/upload');
 const { uploadToCloudinary } = require('../config/cloudinary');
+
+const createOrRefreshFollowNotification = async ({ recipientId, senderId }) => {
+  if (!recipientId || !senderId || String(recipientId) === String(senderId)) return;
+
+  try {
+    await Notification.findOneAndUpdate(
+      {
+        recipient: recipientId,
+        sender: senderId,
+        type: 'follow'
+      },
+      {
+        $set: {
+          message: 'started following you',
+          isRead: false,
+          link: `/profile/${senderId}`,
+          additionalData: {
+            action: 'follow',
+            senderId: String(senderId)
+          }
+        }
+      },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true
+      }
+    );
+  } catch (error) {
+    console.error('Failed to upsert follow notification:', error.message);
+  }
+};
+
+const syncUserProfileBase = async (userId) => {
+  if (!userId) return null;
+
+  const user = await User.findById(userId).select('name email bio profileImage avatar profilePicture');
+  if (!user) return null;
+
+  const imageUrl = user.profileImage || user.avatar?.url || user.profilePicture?.url || '';
+  const publicId = user.avatar?.public_id || user.profilePicture?.public_id || '';
+
+  return UserProfile.findOneAndUpdate(
+    { user: userId },
+    {
+      $setOnInsert: { user: userId },
+      $set: {
+        name: user.name || '',
+        email: user.email || '',
+        bio: user.bio || '',
+        avatar: { public_id: publicId, url: imageUrl },
+        profilePicture: { public_id: publicId, url: imageUrl },
+      }
+    },
+    { new: true, upsert: true }
+  );
+};
+
+const refreshUserProfileStats = async (userId) => {
+  if (!userId) return;
+  const profile = await UserProfile.findOne({ user: userId }).select('followers following');
+  if (!profile) return;
+  await UserProfile.updateOne(
+    { user: userId },
+    {
+      $set: {
+        'stats.totalFollowers': Array.isArray(profile.followers) ? profile.followers.length : 0,
+        'stats.totalFollowing': Array.isArray(profile.following) ? profile.following.length : 0,
+        lastActive: new Date()
+      }
+    }
+  );
+};
+
+const syncUserProfileFollow = async ({ followerId, targetId, isFollowing }) => {
+  if (!followerId || !targetId) return;
+
+  await Promise.all([
+    syncUserProfileBase(followerId),
+    syncUserProfileBase(targetId)
+  ]);
+
+  if (isFollowing) {
+    await Promise.all([
+      UserProfile.findOneAndUpdate(
+        { user: followerId },
+        { $addToSet: { following: targetId }, $pull: { blockedUsers: targetId } }
+      ),
+      UserProfile.findOneAndUpdate(
+        { user: targetId },
+        { $addToSet: { followers: followerId }, $pull: { blockedBy: followerId } }
+      )
+    ]);
+  } else {
+    await Promise.all([
+      UserProfile.findOneAndUpdate(
+        { user: followerId },
+        { $pull: { following: targetId } }
+      ),
+      UserProfile.findOneAndUpdate(
+        { user: targetId },
+        { $pull: { followers: followerId } }
+      )
+    ]);
+  }
+
+  await Promise.all([
+    refreshUserProfileStats(followerId),
+    refreshUserProfileStats(targetId)
+  ]);
+};
 
 // @route   PUT /api/users/profile
 // @desc    Update user profile
@@ -43,6 +156,14 @@ router.put('/profile', protect, upload.single('profileImage'), async (req, res) 
         const uploadResult = await uploadToCloudinary(req.file, 'rubbersense/profiles');
         console.log('✅ Cloudinary success:', uploadResult.url);
         user.profileImage = uploadResult.url;
+        user.avatar = {
+          public_id: uploadResult.publicId,
+          url: uploadResult.url
+        };
+        user.profilePicture = {
+          public_id: uploadResult.publicId,
+          url: uploadResult.url
+        };
         fs.unlinkSync(req.file.path);
       } catch (cloudError) {
         console.error('❌ Cloudinary upload failed:', cloudError);
@@ -53,11 +174,18 @@ router.put('/profile', protect, upload.single('profileImage'), async (req, res) 
     }
 
     await user.save();
+    await syncUserProfileBase(user._id);
     console.log('✅ Profile updated successfully');
+
+    // Re-fetch user with populated followers/following for complete response
+    const userWithPopulated = await User.findById(req.user.id)
+      .populate('followers', 'name profileImage avatar profilePicture')
+      .populate('following', 'name profileImage avatar profilePicture');
 
     res.json({
       success: true,
-      data: user,
+      data: userWithPopulated,
+      user: userWithPopulated,
       message: 'Profile updated successfully'
     });
   } catch (error) {
@@ -78,8 +206,8 @@ router.get('/:id', protect, async (req, res) => {
 
     const user = await User.findById(req.params.id)
       .select('-password -verificationToken')
-      .populate('followers', 'name profileImage')
-      .populate('following', 'name profileImage');
+      .populate('followers', 'name email profileImage avatar profilePicture')
+      .populate('following', 'name email profileImage avatar profilePicture');
 
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found' });
@@ -102,6 +230,7 @@ router.get('/:id', protect, async (req, res) => {
       : false;
 
     const userObj = user.toObject();
+    userObj.profileImage = userObj.profileImage || userObj.avatar?.url || userObj.profilePicture?.url || null;
     delete userObj.blockedUsers;
 
     res.json({
@@ -110,9 +239,17 @@ router.get('/:id', protect, async (req, res) => {
         ...userObj,
         stats: {
           posts: postCount,
+          totalPosts: postCount,
           trees: treeCount,
-          scans: scanCount
+          totalTrees: treeCount,
+          scans: scanCount,
+          totalFollowers: Array.isArray(user.followers) ? user.followers.length : 0,
+          totalFollowing: Array.isArray(user.following) ? user.following.length : 0,
+          followers: Array.isArray(user.followers) ? user.followers.length : 0,
+          following: Array.isArray(user.following) ? user.following.length : 0
         },
+        followersCount: Array.isArray(user.followers) ? user.followers.length : 0,
+        followingCount: Array.isArray(user.following) ? user.following.length : 0,
         isFollowing,
         isBlockedByMe,
         hasBlockedMe
@@ -158,19 +295,40 @@ router.put('/:id/follow', protect, async (req, res) => {
       // Unfollow - atomic pull
       await User.findByIdAndUpdate(req.params.id, { $pull: { followers: req.user.id } });
       await User.findByIdAndUpdate(req.user.id, { $pull: { following: req.params.id } });
+      await syncUserProfileFollow({
+        followerId: req.user.id,
+        targetId: req.params.id,
+        isFollowing: false
+      });
     } else {
       // Follow - atomic addToSet (prevents duplicates at DB layer)
       await User.findByIdAndUpdate(req.params.id, { $addToSet: { followers: req.user.id } });
       await User.findByIdAndUpdate(req.user.id, { $addToSet: { following: req.params.id } });
+      await syncUserProfileFollow({
+        followerId: req.user.id,
+        targetId: req.params.id,
+        isFollowing: true
+      });
+      await createOrRefreshFollowNotification({
+        recipientId: req.params.id,
+        senderId: req.user.id
+      });
     }
 
-    // Fetch updated count
-    const updatedUser = await User.findById(req.params.id);
+    // Fetch updated counts for both target and requester
+    const [updatedUser, updatedCurrent] = await Promise.all([
+      User.findById(req.params.id).select('followers'),
+      User.findById(req.user.id).select('following')
+    ]);
 
     res.json({ 
       success: true, 
       isFollowing: !isFollowing,
-      followersCount: updatedUser.followers.length 
+      followersCount: updatedUser.followers.length,
+      followingCount: Array.isArray(updatedCurrent?.following) ? updatedCurrent.following.length : 0,
+      targetUserId: String(req.params.id),
+      currentUserId: String(req.user.id),
+      message: isFollowing ? 'User unfollowed successfully' : 'User followed successfully'
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

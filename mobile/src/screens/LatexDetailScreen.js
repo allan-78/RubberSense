@@ -24,6 +24,44 @@ const LatexDetailScreen = ({ route, navigation }) => {
   // Use currentBatch for rendering to support updates
   const batch = currentBatch;
 
+  const toNumber = (value, fallback = 0) => {
+    const parsed = Number(String(value ?? '').replace(/,/g, '').trim());
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const normalizeBulletText = (text) =>
+    String(text || '')
+      .replace(/^[-*\u2022]\s*/, '')
+      .replace(/^\d+[.)]\s*/, '')
+      .trim();
+
+  const toBulletItems = (value) => {
+    if (value == null) return [];
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => toBulletItems(item));
+    }
+    if (typeof value === 'object') {
+      return Object.values(value).flatMap((item) => toBulletItems(item));
+    }
+    return String(value)
+      .replace(/\r/g, '\n')
+      .split(/\n|;\s+|\|\s*/)
+      .map((item) => normalizeBulletText(item))
+      .filter(Boolean);
+  };
+
+  const estimatedDryWeightKg = (() => {
+    const storedEstimate = toNumber(batch.productYieldEstimation?.estimatedYield, 0);
+    if (storedEstimate > 0) return storedEstimate;
+
+    const volume = toNumber(batch.quantityEstimation?.volume ?? batch.quantityEstimation?.weight, 0);
+    const drc = toNumber(batch.productYieldEstimation?.dryRubberContent, 0);
+    if (volume > 0 && drc > 0) {
+      return (volume * drc) / 100;
+    }
+    return 0;
+  })();
+
   const handleReanalyze = async () => {
     if (!currentBatch?._id) {
         Alert.alert("Error", "Invalid batch ID. Cannot re-analyze.");
@@ -161,14 +199,14 @@ const LatexDetailScreen = ({ route, navigation }) => {
                 {batch.aiInsights.promptRecommendations?.length > 0 && (
                     <>
                         <Text style={[styles.detailLabel, { marginBottom: 8 }]}>Suggested Questions:</Text>
-                        {batch.aiInsights.promptRecommendations.map((prompt, index) => (
+                        {toBulletItems(batch.aiInsights.promptRecommendations).map((prompt, index) => (
                             <TouchableOpacity 
                                 key={index} 
-                                style={styles.promptChip}
+                                style={styles.bulletPoint}
                                 onPress={() => navigation.navigate('Chatbot', { initialPrompt: prompt })}
                             >
-                                <MaterialIcons name="chat-bubble-outline" size={16} color={theme.colors.primary} style={{ marginRight: 6 }} />
-                                <Text style={styles.promptText}>{prompt}</Text>
+                                <MaterialIcons name="chat-bubble-outline" size={16} color={theme.colors.primary} style={{marginTop: 2}} />
+                                <Text style={styles.insightText}>{prompt}</Text>
                             </TouchableOpacity>
                         ))}
                     </>
@@ -177,7 +215,7 @@ const LatexDetailScreen = ({ route, navigation }) => {
                 {batch.aiInsights.suggestions?.length > 0 && (
                    <View style={{ marginTop: 12 }}>
                       <Text style={[styles.detailLabel, { marginBottom: 8 }]}>Suggestions:</Text>
-                      {batch.aiInsights.suggestions.map((sug, index) => (
+                      {toBulletItems(batch.aiInsights.suggestions).map((sug, index) => (
                           <View key={`sug-${index}`} style={styles.bulletPoint}>
                             <MaterialIcons name="star-outline" size={16} color={theme.colors.warning} style={{marginTop: 2}} />
                             <Text style={styles.insightText}>{sug}</Text>
@@ -238,8 +276,8 @@ const LatexDetailScreen = ({ route, navigation }) => {
              </View>
              
              <DetailRow 
-                label="RGB Values" 
-                value={batch.colorAnalysis?.rgb ? `R:${batch.colorAnalysis.rgb.r} G:${batch.colorAnalysis.rgb.g} B:${batch.colorAnalysis.rgb.b}` : 'N/A'}
+                label="Color Code" 
+                value={batch.colorAnalysis?.hex || 'N/A'}
                 isLast
              />
           </InfoCard>
@@ -252,7 +290,7 @@ const LatexDetailScreen = ({ route, navigation }) => {
             />
             <DetailRow 
               label="Est. Dry Weight" 
-              value={batch.productYieldEstimation?.estimatedYield ? `${batch.productYieldEstimation.estimatedYield} kg` : 'N/A'} 
+              value={estimatedDryWeightKg > 0 ? `${estimatedDryWeightKg.toFixed(2)} kg` : 'N/A'} 
             />
             <DetailRow 
               label="Market Price" 
@@ -278,18 +316,37 @@ const LatexDetailScreen = ({ route, navigation }) => {
             />
             <View style={{ marginTop: 10 }}>
                 <Text style={styles.detailLabel}>Reasoning</Text>
-                <Text style={styles.descriptionText}>{batch.productRecommendation?.reason || 'No specific reasoning provided.'}</Text>
+                {toBulletItems(batch.productRecommendation?.reason).length > 0 ? (
+                  toBulletItems(batch.productRecommendation?.reason).map((item, index) => (
+                    <View key={`reason-${index}`} style={styles.bulletPoint}>
+                      <MaterialIcons name="auto-awesome" size={16} color={theme.colors.primary} style={{marginTop: 2}} />
+                      <Text style={styles.insightText}>{item}</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.descriptionText}>No specific reasoning provided.</Text>
+                )}
             </View>
             {batch.productRecommendation?.marketValueInsight && (
               <View style={{ marginTop: 12 }}>
                 <Text style={styles.detailLabel}>Market Value Insight</Text>
-                <Text style={styles.descriptionText}>{batch.productRecommendation.marketValueInsight}</Text>
+                {toBulletItems(batch.productRecommendation.marketValueInsight).map((item, index) => (
+                  <View key={`market-${index}`} style={styles.bulletPoint}>
+                    <MaterialIcons name="trending-up" size={16} color={theme.colors.success} style={{marginTop: 2}} />
+                    <Text style={styles.insightText}>{item}</Text>
+                  </View>
+                ))}
               </View>
             )}
             {batch.productRecommendation?.preservation && (
               <View style={{ marginTop: 12 }}>
                 <Text style={styles.detailLabel}>Preservation Advice</Text>
-                <Text style={styles.descriptionText}>{batch.productRecommendation.preservation}</Text>
+                {toBulletItems(batch.productRecommendation.preservation).map((item, index) => (
+                  <View key={`pres-${index}`} style={styles.bulletPoint}>
+                    <MaterialIcons name="verified-user" size={16} color={theme.colors.secondary} style={{marginTop: 2}} />
+                    <Text style={styles.insightText}>{item}</Text>
+                  </View>
+                ))}
               </View>
             )}
             {batch.productRecommendation?.recommendedUses?.length > 0 && (

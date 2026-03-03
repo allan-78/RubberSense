@@ -43,6 +43,12 @@ const protect = async (req, res, next) => {
         });
       }
 
+      // Compatibility: support profile images stored as avatar/profilePicture objects.
+      req.user.profileImage = req.user.profileImage
+        || req.user.avatar?.url
+        || req.user.profilePicture?.url
+        || null;
+
       // Add id property because lean() returns plain object with _id
       req.user.id = req.user._id.toString();
 

@@ -145,9 +145,9 @@ if __name__ == "__main__":
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
     # Construct absolute path to the model relative to the script
-    default_model_path = os.path.join(script_dir, "models", "rubber_tree_model", "weights", "best.pt")
+    default_model_path = os.path.join(script_dir, "models", "rubber_tree_model", "weights", "Leaf-v2.pt")
     
-    parser.add_argument("--model", type=str, default=default_model_path, help="Path to the trained YOLO model (best.pt or Leaf.pt)")
+    parser.add_argument("--model", type=str, default=default_model_path, help="Path to the trained YOLO model (Leaf-v2.pt)")
     parser.add_argument("--source", type=str, default="webcam", help="Path to image file or 'webcam'")
     parser.add_argument("--no-show", action="store_true", help="Do not display the image window (save to disk instead)")
     

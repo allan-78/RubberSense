@@ -2,7 +2,7 @@ import React, { createContext, useState, useContext, useEffect, useCallback, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { marketAPI, postAPI, messageAPI } from '../services/api';
+import { marketAPI, postAPI, messageAPI, mailAPI, notificationAPI } from '../services/api';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -27,8 +27,65 @@ const DEFAULT_SYNC_STATE = {
   lastMarketPrice: null,
   lastMarketTimestamp: null,
   lastPostId: null,
+  seenAnnouncementIds: [],
   seenRequestKeys: [],
   lastSyncedAt: null,
+};
+
+const SERVER_NOTIFICATION_META = {
+  follow: { type: 'social', title: 'New Follower', icon: 'person-add', color: '#8B5CF6' },
+  post_like: { type: 'social', title: 'Post Liked', icon: 'thumb-up', color: '#3B82F6' },
+  post_comment: { type: 'social', title: 'New Comment', icon: 'chat', color: '#10B981' },
+  comment_like: { type: 'social', title: 'Comment Liked', icon: 'thumb-up', color: '#06B6D4' },
+  new_post: { type: 'system', title: 'New Post', icon: 'article', color: '#6366F1' },
+  content_reported: { type: 'alert', title: 'Content Reported', icon: 'warning', color: '#F59E0B' },
+  content_hidden: { type: 'alert', title: 'Content Hidden', icon: 'warning', color: '#EF4444' },
+};
+const ANNOUNCEMENT_EVENT_PREFIX = 'announcement-';
+
+const extractAnnouncementIdFromEventKey = (eventKey) => {
+  if (typeof eventKey !== 'string') return null;
+  if (!eventKey.startsWith(ANNOUNCEMENT_EVENT_PREFIX)) return null;
+
+  const id = eventKey.slice(ANNOUNCEMENT_EVENT_PREFIX.length).trim();
+  return id || null;
+};
+
+const mapServerNotification = (notification) => {
+  if (!notification || typeof notification !== 'object') return null;
+
+  const id = notification._id || notification.id;
+  if (!id) return null;
+
+  const meta = SERVER_NOTIFICATION_META[notification.type] || {
+    type: 'system',
+    title: 'Notification',
+    icon: 'info',
+    color: '#3B82F6',
+  };
+
+  const senderName = notification?.sender?.name || 'Someone';
+  const fallbackMessage = notification.type === 'follow'
+    ? `${senderName} started following you.`
+    : `${senderName} sent a new notification.`;
+  const rawMessage = String(notification?.message || '').trim();
+  const finalMessage = rawMessage
+    ? (notification.type === 'follow' ? `${senderName} ${rawMessage}` : rawMessage)
+    : fallbackMessage;
+
+  return {
+    id: String(id),
+    serverId: String(id),
+    source: 'server',
+    eventKey: notification?.eventKey ? String(notification.eventKey) : `server-${id}`,
+    type: meta.type,
+    title: notification?.title || meta.title,
+    message: finalMessage,
+    icon: notification?.icon || meta.icon,
+    color: notification?.color || meta.color,
+    read: Boolean(notification?.isRead ?? notification?.read),
+    time: notification?.createdAt || notification?.time || new Date().toISOString(),
+  };
 };
 
 export const useNotification = () => useContext(NotificationContext);
@@ -85,6 +142,8 @@ export const NotificationProvider = ({ children }) => {
     const sorted = normalized
       .map(item => ({
         id: String(item.id || item.eventKey || Date.now()),
+        serverId: item.serverId ? String(item.serverId) : null,
+        source: item.source === 'server' ? 'server' : 'local',
         eventKey: item.eventKey ? String(item.eventKey) : null,
         type: item.type || 'system',
         title: item.title || 'Notification',
@@ -97,9 +156,18 @@ export const NotificationProvider = ({ children }) => {
       .sort((a, b) => new Date(b.time) - new Date(a.time))
       .slice(0, 300);
 
-    notificationsRef.current = sorted;
-    setNotifications(sorted);
-    await AsyncStorage.setItem('notifications', JSON.stringify(sorted));
+    const deduped = [];
+    const seen = new Set();
+    sorted.forEach((item) => {
+      const key = item.serverId || item.eventKey || item.id;
+      if (seen.has(key)) return;
+      seen.add(key);
+      deduped.push(item);
+    });
+
+    notificationsRef.current = deduped;
+    setNotifications(deduped);
+    await AsyncStorage.setItem('notifications', JSON.stringify(deduped));
   }, []);
 
   const addNotification = useCallback(async (notification, options = {}) => {
@@ -113,6 +181,8 @@ export const NotificationProvider = ({ children }) => {
 
     const created = {
       id: String(notification?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+      serverId: null,
+      source: 'local',
       eventKey,
       type: notification?.type || 'system',
       title: notification?.title || 'Notification',
@@ -148,6 +218,15 @@ export const NotificationProvider = ({ children }) => {
   }, [commitNotifications]);
 
   const markAsRead = useCallback(async (id) => {
+    const target = notificationsRef.current.find(n => String(n.id) === String(id));
+    if (target?.source === 'server' && target?.serverId) {
+      try {
+        await notificationAPI.markAsRead(target.serverId);
+      } catch (error) {
+        console.log('Failed to mark server notification as read', error);
+      }
+    }
+
     const updated = notificationsRef.current.map(n =>
       String(n.id) === String(id) ? { ...n, read: true } : n
     );
@@ -155,11 +234,25 @@ export const NotificationProvider = ({ children }) => {
   }, [commitNotifications]);
 
   const markAllAsRead = useCallback(async () => {
+    try {
+      await notificationAPI.markAllAsRead();
+    } catch (error) {
+      console.log('Failed to mark all server notifications as read', error);
+    }
+
     const updated = notificationsRef.current.map(n => ({ ...n, read: true }));
     await commitNotifications(updated);
   }, [commitNotifications]);
 
   const clearAll = useCallback(async () => {
+    const serverIds = notificationsRef.current
+      .filter(n => n?.source === 'server' && n?.serverId)
+      .map(n => n.serverId);
+
+    if (serverIds.length > 0) {
+      await Promise.allSettled(serverIds.map((id) => notificationAPI.delete(id)));
+    }
+
     await commitNotifications([]);
   }, [commitNotifications]);
 
@@ -200,6 +293,7 @@ export const NotificationProvider = ({ children }) => {
     const market = data.marketData || {};
     const posts = Array.isArray(data.posts) ? data.posts : [];
     const requests = Array.isArray(data.requests) ? data.requests : [];
+    const announcements = Array.isArray(data.announcements) ? data.announcements : [];
 
     const seenRequestKeys = requests.map(req => {
       const senderId = req?.user?._id || req?._id;
@@ -207,11 +301,16 @@ export const NotificationProvider = ({ children }) => {
       return `msgreq-${senderId}-${lastMessageId}`;
     });
 
+    const seenAnnouncementIds = announcements
+      .map(item => item?._id)
+      .filter(Boolean);
+
     return saveSyncState({
       initialized: true,
       lastMarketPrice: Number.isFinite(Number(market?.price)) ? Number(market.price) : null,
       lastMarketTimestamp: market?.timestamp || null,
       lastPostId: posts[0]?._id || null,
+      seenAnnouncementIds: seenAnnouncementIds.slice(-600),
       seenRequestKeys: seenRequestKeys.slice(-400),
       lastSyncedAt: new Date().toISOString(),
     });
@@ -223,24 +322,61 @@ export const NotificationProvider = ({ children }) => {
     const currentSync = syncStateRef.current || DEFAULT_SYNC_STATE;
 
     try {
-      const [marketRes, postsRes, requestsRes, userRaw] = await Promise.all([
+      const [marketRes, postsRes, announcementsRes, requestsRes, notificationsRes, userRaw] = await Promise.all([
         currentSettings.marketAlerts ? marketAPI.getForecast().catch(() => null) : Promise.resolve(null),
         currentSettings.blogMonitor ? postAPI.getAll().catch(() => null) : Promise.resolve(null),
+        currentSettings.adminAnnouncements ? mailAPI.getAnnouncements().catch(() => null) : Promise.resolve(null),
         messageAPI.getRequests().catch(() => null),
+        notificationAPI.getAll().catch(() => null),
         AsyncStorage.getItem('user'),
       ]);
 
       const marketData = marketRes?.data || marketRes || {};
       const postsDataRaw = postsRes?.data || postsRes || [];
       const posts = Array.isArray(postsDataRaw) ? postsDataRaw : [];
+      const announcementsDataRaw =
+        announcementsRes?.data?.data ||
+        announcementsRes?.data ||
+        announcementsRes?.announcements ||
+        announcementsRes ||
+        [];
+      const announcements = Array.isArray(announcementsDataRaw) ? announcementsDataRaw : [];
+      const announcementsRequestSucceeded = currentSettings.adminAnnouncements
+        ? announcementsRes !== null
+        : false;
       const requestsDataRaw = requestsRes?.data || requestsRes || [];
       const requests = Array.isArray(requestsDataRaw) ? requestsDataRaw : [];
+      const notificationsDataRaw = notificationsRes?.data || notificationsRes || [];
+      const serverNotifications = Array.isArray(notificationsDataRaw)
+        ? notificationsDataRaw.map(mapServerNotification).filter(Boolean)
+        : [];
       const me = userRaw ? JSON.parse(userRaw) : null;
       const myUserId = String(me?._id || me?.id || '');
 
+      let localNotifications = notificationsRef.current.filter(item => item?.source !== 'server');
+      if (announcementsRequestSucceeded) {
+        const visibleAnnouncementIds = new Set(
+          announcements
+            .map((item) => String(item?._id || '').trim())
+            .filter(Boolean)
+        );
+
+        localNotifications = localNotifications.filter((item) => {
+          const announcementId = extractAnnouncementIdFromEventKey(item?.eventKey);
+          if (!announcementId) return true;
+          return visibleAnnouncementIds.has(announcementId);
+        });
+      }
+      await commitNotifications([...serverNotifications, ...localNotifications]);
+
       if (!currentSync.initialized) {
-        await bootstrapFromCurrentData({ marketData, posts, requests });
-        return { success: true, added: 0, initialized: true };
+        await bootstrapFromCurrentData({ marketData, posts, requests, announcements });
+        return {
+          success: true,
+          added: 0,
+          initialized: true,
+          syncedServer: serverNotifications.length
+        };
       }
 
       const generated = [];
@@ -325,6 +461,40 @@ export const NotificationProvider = ({ children }) => {
           }
         });
         nextSync.seenRequestKeys = [...seen].slice(-400);
+      }
+
+      if (currentSettings.adminAnnouncements && Array.isArray(announcements) && announcements.length > 0) {
+        const seenAnnouncements = new Set(
+          Array.isArray(nextSync.seenAnnouncementIds) ? nextSync.seenAnnouncementIds : []
+        );
+
+        const sortedAnnouncements = [...announcements].sort(
+          (a, b) => new Date(b?.publishDate || b?.createdAt || 0) - new Date(a?.publishDate || a?.createdAt || 0)
+        );
+
+        sortedAnnouncements.forEach((item) => {
+          const announcementId = item?._id;
+          if (!announcementId) return;
+
+          const isReadByCurrentUser = Array.isArray(item?.readBy)
+            && item.readBy.some((entry) => String(entry?.userId || entry?.user || entry) === myUserId);
+          if (!seenAnnouncements.has(announcementId) && !isReadByCurrentUser) {
+            const title = item?.title || 'New Admin Announcement';
+            const content = item?.content || '';
+            generated.push({
+              eventKey: `announcement-${announcementId}`,
+              type: 'system',
+              title,
+              message: content.length > 120 ? `${content.slice(0, 117)}...` : content,
+              icon: 'campaign',
+              color: item?.isImportant ? '#F59E0B' : '#10B981',
+            });
+          }
+
+          seenAnnouncements.add(announcementId);
+        });
+
+        nextSync.seenAnnouncementIds = [...seenAnnouncements].slice(-600);
       }
 
       for (const item of generated) {

@@ -45,23 +45,55 @@ const compressLabels = (labels = [], maxVisible = 6) => {
   return labels.map((label, idx) => (idx % step === 0 || idx === labels.length - 1 ? label : ''));
 };
 
+const formatSourceLabel = (source, sourceSymbol) => {
+  const provider = String(source || '').trim().toLowerCase();
+  const providerLabel = provider === 'stooq'
+    ? 'Source: Stooq'
+    : provider
+      ? `Source: ${provider.toUpperCase()}`
+      : 'Source: -';
+
+  const symbol = String(sourceSymbol || '').trim().toUpperCase();
+  return symbol ? `${providerLabel} (${symbol})` : providerLabel;
+};
+
+const formatUpdatedLabel = (timestamp) => {
+  const parsed = new Date(timestamp || '');
+  if (Number.isNaN(parsed.getTime())) return 'Updated: -';
+
+  const formatted = parsed.toLocaleString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
+  return `Updated: ${formatted}`;
+};
+
 const MarketScreen = ({ navigation }) => {
   const { settings, toggleSetting } = useNotification();
   const { refreshTick } = useAppRefresh();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [chartPeriod, setChartPeriod] = useState('1W'); // '1W' or '1Y'
+  const [chartPeriod, setChartPeriod] = useState('1D'); // '1D' | '1M' | '1Y'
   const [marketData, setMarketData] = useState({
     currentPrice: 0,
     priceChange: 0,
     lastUpdated: '',
-    dailyHistory: [],
-    dailyLabels: [],
-    monthlyHistory: [],
-    monthlyLabels: [],
+    dayHistory: [],
+    dayLabels: [],
+    monthHistory: [],
+    monthLabels: [],
+    yearHistory: [],
+    yearLabels: [],
     trend: 'NEUTRAL',
     confidence: 0,
     nextWeekPrice: 0,
+    source: '',
+    sourceSymbol: '',
+    stale: false,
     features: [],
     analysis: '',
     recommendations: []
@@ -72,17 +104,41 @@ const MarketScreen = ({ navigation }) => {
       const response = await marketAPI.getForecast(force);
       if (response.success) {
         const data = response.data;
+        const dayHistory = Array.isArray(data.dayHistory) && data.dayHistory.length > 0
+          ? data.dayHistory
+          : (Array.isArray(data.dailyHistory) ? data.dailyHistory : []);
+        const dayLabels = Array.isArray(data.dayLabels) && data.dayLabels.length > 0
+          ? data.dayLabels
+          : (Array.isArray(data.dailyLabels) ? data.dailyLabels : []);
+        const monthHistory = Array.isArray(data.monthHistory) && data.monthHistory.length > 0
+          ? data.monthHistory
+          : (Array.isArray(data.monthlyHistory) ? data.monthlyHistory : []);
+        const monthLabels = Array.isArray(data.monthLabels) && data.monthLabels.length > 0
+          ? data.monthLabels
+          : (Array.isArray(data.monthlyLabels) ? data.monthlyLabels : []);
+        const yearHistory = Array.isArray(data.yearHistory) && data.yearHistory.length > 0
+          ? data.yearHistory
+          : (Array.isArray(data.monthlyHistory) ? data.monthlyHistory : []);
+        const yearLabels = Array.isArray(data.yearLabels) && data.yearLabels.length > 0
+          ? data.yearLabels
+          : (Array.isArray(data.monthlyLabels) ? data.monthlyLabels : []);
+
         setMarketData({
           currentPrice: data.price || 0,
           priceChange: data.priceChange || 0,
-          lastUpdated: data.timestamp || new Date().toISOString(),
-          dailyHistory: data.dailyHistory || [],
-          dailyLabels: data.dailyLabels || [],
-          monthlyHistory: data.monthlyHistory || [],
-          monthlyLabels: data.monthlyLabels || [],
+          lastUpdated: data.sourceTimestamp || data.timestamp || new Date().toISOString(),
+          dayHistory,
+          dayLabels,
+          monthHistory,
+          monthLabels,
+          yearHistory,
+          yearLabels,
           trend: data.trend || 'NEUTRAL',
           confidence: data.confidence || 0,
           nextWeekPrice: data.nextWeekProjection || 0,
+          source: data.source || '',
+          sourceSymbol: data.sourceSymbol || '',
+          stale: Boolean(data.stale),
           features: data.features || [],
           analysis: truncateText(data.analysis || '', MAX_ANALYSIS_LENGTH),
           recommendations: (Array.isArray(data.recommendations) ? data.recommendations : [])
@@ -149,9 +205,17 @@ const MarketScreen = ({ navigation }) => {
   }
 
   const getChartData = () => {
-    const defaultWeekLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const defaultDayLabels = Array.from({ length: 24 }).map((_, idx) => `${idx}:00`);
+    const defaultMonthLabels = Array.from({ length: 30 }).map((_, idx) => `${idx + 1}`);
+    const defaultYearLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
     const normalizeSeries = (values, labels, fallbackLabels) => {
-      const safeValues = Array.isArray(values) && values.length > 0 ? values : [0];
+      const safeValues = Array.isArray(values) && values.length > 0
+        ? values.map((value) => {
+            const n = Number(value);
+            return Number.isFinite(n) ? n : 0;
+          })
+        : [0];
       let safeLabels = Array.isArray(labels) && labels.length > 0 ? labels : fallbackLabels;
 
       if (safeLabels.length !== safeValues.length) {
@@ -169,30 +233,37 @@ const MarketScreen = ({ navigation }) => {
       };
     };
 
-    if (chartPeriod === '1W') {
-      const weeklyValues = marketData.dailyHistory && marketData.dailyHistory.length > 0
-        ? marketData.dailyHistory
-        : [0, 0, 0, 0, 0, 0, 0];
-      return normalizeSeries(weeklyValues, marketData.dailyLabels, defaultWeekLabels);
-    } else {
-      const history = marketData.monthlyHistory || [];
-      const displayData = history.length > 12 ? history.slice(-12) : (history.length > 0 ? history : [0]);
-      const labels = marketData.monthlyLabels || [];
-      const displayLabels = labels.length > 12 ? labels.slice(-12) : labels;
-      const normalized = normalizeSeries(displayData, displayLabels, ["Jan"]);
+    if (chartPeriod === '1D') {
+      const normalized = normalizeSeries(marketData.dayHistory, marketData.dayLabels, defaultDayLabels);
+      return {
+        ...normalized,
+        labels: compressLabels(normalized.labels, 8)
+      };
+    }
+
+    if (chartPeriod === '1M') {
+      const normalized = normalizeSeries(marketData.monthHistory, marketData.monthLabels, defaultMonthLabels);
       return {
         ...normalized,
         labels: compressLabels(normalized.labels, 6)
       };
     }
+
+    const yearlyNormalized = normalizeSeries(marketData.yearHistory, marketData.yearLabels, defaultYearLabels);
+    return {
+      ...yearlyNormalized,
+      labels: compressLabels(yearlyNormalized.labels, 6)
+    };
   };
 
   const trendText = marketData.trend === 'RISE' ? 'BULLISH' : marketData.trend === 'FALL' ? 'BEARISH' : 'SIDEWAYS';
   const trendColor = marketData.trend === 'RISE' ? ACCENT_GAIN : marketData.trend === 'FALL' ? ACCENT_LOSS : ACCENT_NEUTRAL;
   const chartData = getChartData();
-  const dynamicChartWidth = chartPeriod === '1Y'
-    ? Math.max(SCREEN_WIDTH - CHART_SIDE_PADDING, chartData.labels.length * 54)
-    : SCREEN_WIDTH - CHART_SIDE_PADDING;
+  const pointCount = chartData?.datasets?.[0]?.data?.length || chartData.labels.length;
+  const pixelsPerPoint = chartPeriod === '1Y' ? 54 : chartPeriod === '1M' ? 30 : 24;
+  const dynamicChartWidth = Math.max(SCREEN_WIDTH - CHART_SIDE_PADDING, pointCount * pixelsPerPoint);
+  const marketSourceLabel = formatSourceLabel(marketData.source, marketData.sourceSymbol);
+  const marketUpdatedLabel = formatUpdatedLabel(marketData.lastUpdated);
 
   return (
     <View style={styles.container}>
@@ -234,6 +305,15 @@ const MarketScreen = ({ navigation }) => {
           <View>
             <Text style={styles.priceLabel}>RSS3 Rubber Price</Text>
             <Text style={styles.priceValue}>₱{(marketData.currentPrice || 0).toFixed(2)}</Text>
+            <View style={styles.priceMetaWrap}>
+              <Text style={styles.priceMetaText}>{marketSourceLabel}</Text>
+              <Text style={styles.priceMetaText}>{marketUpdatedLabel}</Text>
+              {marketData.stale ? (
+                <Text style={[styles.priceMetaText, styles.staleText]}>
+                  Live feed unavailable, showing latest stored value.
+                </Text>
+              ) : null}
+            </View>
           </View>
           <View style={[
             styles.changeBadge, 
@@ -259,10 +339,16 @@ const MarketScreen = ({ navigation }) => {
              <Text style={styles.sectionTitle}>Price Trend</Text>
              <View style={styles.periodToggle}>
                 <TouchableOpacity 
-                  style={[styles.periodBtn, chartPeriod === '1W' && styles.periodBtnActive]}
-                  onPress={() => setChartPeriod('1W')}
+                  style={[styles.periodBtn, chartPeriod === '1D' && styles.periodBtnActive]}
+                  onPress={() => setChartPeriod('1D')}
                 >
-                  <Text style={[styles.periodText, chartPeriod === '1W' && styles.periodTextActive]}>1W</Text>
+                  <Text style={[styles.periodText, chartPeriod === '1D' && styles.periodTextActive]}>1D</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.periodBtn, chartPeriod === '1M' && styles.periodBtnActive]}
+                  onPress={() => setChartPeriod('1M')}
+                >
+                  <Text style={[styles.periodText, chartPeriod === '1M' && styles.periodTextActive]}>1M</Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={[styles.periodBtn, chartPeriod === '1Y' && styles.periodBtnActive]}
@@ -281,7 +367,7 @@ const MarketScreen = ({ navigation }) => {
               yAxisLabel="₱"
               chartConfig={chartConfig}
               bezier
-              verticalLabelRotation={chartPeriod === '1Y' ? 30 : 0}
+              verticalLabelRotation={chartPeriod === '1Y' ? 30 : chartPeriod === '1M' ? 20 : 0}
               style={styles.chart}
             />
           </ScrollView>
@@ -435,6 +521,17 @@ const styles = StyleSheet.create({
     fontSize: 42,
     fontWeight: 'bold',
     color: TEXT_PRIMARY,
+  },
+  priceMetaWrap: {
+    marginTop: 10,
+  },
+  priceMetaText: {
+    fontSize: 12,
+    color: TEXT_SECONDARY,
+    marginTop: 2,
+  },
+  staleText: {
+    color: ACCENT_NEUTRAL,
   },
   changeBadge: {
     flexDirection: 'row',

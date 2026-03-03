@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { useAppRefresh } from '../context/AppRefreshContext';
+import { resolveUserProfileImage } from '../services/api';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 
@@ -181,7 +182,10 @@ const EditProfileScreen = () => {
     }
   };
 
-  const displayImage = selectedImage || user?.profileImage || `https://ui-avatars.com/api/?name=${name.replace(' ', '+')}&background=556B2F&color=fff&size=200`;
+  const displayImage =
+    selectedImage ||
+    resolveUserProfileImage(user) ||
+    `https://ui-avatars.com/api/?name=${name.replace(' ', '+')}&background=556B2F&color=fff&size=200`;
 
   return (
     <View style={styles.container}>

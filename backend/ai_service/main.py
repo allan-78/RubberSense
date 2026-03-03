@@ -43,47 +43,45 @@ def get_leaf_model():
     global LEAF_MODEL
     if LEAF_MODEL is None and YOLO_AVAILABLE:
         try:
-            # UPDATED: Pointing to Leaf.pt as requested
-            model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Leaf.pt')
-            if not os.path.exists(model_path):
-                 # Fallback to best.pt if Leaf.pt is missing (safety)
-                 model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/best.pt')
-            
+            weights_dir = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights')
+            model_path = os.path.join(weights_dir, 'Leaf-v2.pt')
             if os.path.exists(model_path):
                 LEAF_MODEL = YOLO(model_path)
-                sys.stderr.write(f"✅ [Python ML] Loaded Leaf Model: {model_path}\n")
+                sys.stderr.write(f"ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ [Python ML] Loaded Leaf Model: {model_path}\n")
             else:
-                sys.stderr.write(f"❌ [Python ML] Leaf model not found at {model_path}\n")
+                sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Leaf model not found at {model_path}\n")
         except Exception as e:
-            sys.stderr.write(f"❌ [Python ML] Failed to load leaf model: {e}\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Failed to load leaf model: {e}\n")
     return LEAF_MODEL
 
 def get_trunk_model():
     global TRUNK_MODEL
     if TRUNK_MODEL is None and YOLO_AVAILABLE:
         try:
-            model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Trunks.pt')
+            weights_dir = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights')
+            model_path = os.path.join(weights_dir, 'Trunks-v2.pt')
             if os.path.exists(model_path):
                 TRUNK_MODEL = YOLO(model_path)
-                sys.stderr.write(f"✅ [Python ML] Loaded Trunk Model: {model_path}\n")
+                sys.stderr.write(f"Loaded Trunk Model: {model_path}\n")
             else:
-                sys.stderr.write(f"❌ [Python ML] Trunk model not found at {model_path}\n")
+                sys.stderr.write(f"Trunk model not found at {model_path}\n")
         except Exception as e:
-            sys.stderr.write(f"❌ [Python ML] Failed to load trunk model: {e}\n")
+            sys.stderr.write(f"Failed to load trunk model: {e}\n")
     return TRUNK_MODEL
 
 def get_latex_model():
     global LATEX_MODEL
     if LATEX_MODEL is None and YOLO_AVAILABLE:
         try:
-            model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Latex.pt')
+            weights_dir = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights')
+            model_path = os.path.join(weights_dir, 'Latex-v2.pt')
             if os.path.exists(model_path):
                 LATEX_MODEL = YOLO(model_path)
-                sys.stderr.write(f"✅ [Python ML] Loaded Latex Model: {model_path}\n")
+                sys.stderr.write(f"ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ [Python ML] Loaded Latex Model: {model_path}\n")
             else:
-                sys.stderr.write(f"❌ [Python ML] Latex model not found at {model_path}\n")
+                sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Latex model not found at {model_path}\n")
         except Exception as e:
-            sys.stderr.write(f"❌ [Python ML] Failed to load latex model: {e}\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Failed to load latex model: {e}\n")
     return LATEX_MODEL
 
 def get_cls_model():
@@ -92,7 +90,7 @@ def get_cls_model():
         try:
             CLS_MODEL = YOLO('yolo11n-cls.pt')
         except Exception as e:
-            sys.stderr.write(f"❌ [Python ML] Failed to load CLS model: {e}\n")
+            sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python ML] Failed to load CLS model: {e}\n")
     return CLS_MODEL
 
 def get_groq_analysis(disease_name, confidence, spot_count, color_name):
@@ -137,7 +135,7 @@ def get_groq_analysis(disease_name, confidence, spot_count, color_name):
             content = response.json()['choices'][0]['message']['content']
             return json.loads(content)
     except Exception as e:
-        sys.stderr.write(f"⚠️ [Groq API] Analysis failed: {e}\n")
+        sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Groq API] Analysis failed: {e}\n")
     
     return None
 
@@ -171,6 +169,8 @@ def get_groq_latex_analysis(latex_type, confidence, contamination_level, drc):
         "estimated_price_range_php": "min-max" (e.g., "50-60"),
         "reasoning": "Reason for the price estimation based on quality and general market knowledge."
     }}
+    10. "prompt_recommendations": Array of 3-6 concise user questions for the assistant.
+    11. "suggestions": Array of 4-8 actionable bullet-ready recommendations for this specific sample.
 
     Do not include markdown formatting, just the raw JSON object.
     """
@@ -193,7 +193,7 @@ def get_groq_latex_analysis(latex_type, confidence, contamination_level, drc):
             content = response.json()['choices'][0]['message']['content']
             return json.loads(content)
     except Exception as e:
-        sys.stderr.write(f"⚠️ [Groq API] Latex Analysis failed: {e}\n")
+        sys.stderr.write(f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â [Groq API] Latex Analysis failed: {e}\n")
     
     return None
 
@@ -272,6 +272,8 @@ def build_latex_ai_recommendation(ai_insights, grade, fallback_quality_assessmen
     recommended_product = "AI recommendation unavailable"
     recommended_uses = []
     market_analysis = None
+    prompt_recommendations = []
+    suggestions = []
 
     if ai_insights:
         quality_assessment = str(
@@ -292,6 +294,15 @@ def build_latex_ai_recommendation(ai_insights, grade, fallback_quality_assessmen
         ai_end_products = to_text_list(ai_insights.get("recommended_end_products"))
         ai_grade_recs = to_text_list(ai_insights.get("grade_based_product_recommendations"))
         recommended_uses = list(dict.fromkeys(ai_end_products + ai_grade_recs))
+        prompt_recommendations = list(dict.fromkeys(
+            to_text_list(ai_insights.get("prompt_recommendations"))
+            + to_text_list(ai_insights.get("promptRecommendations"))
+        ))
+        suggestions = list(dict.fromkeys(to_text_list(ai_insights.get("suggestions"))))
+        if not suggestions:
+            suggestions = list(dict.fromkeys(
+                processing_values + preservation_values + market_values + contamination_values + ai_end_products[:3]
+            ))
 
         if ai_primary_product:
             recommended_product = ai_primary_product
@@ -309,7 +320,9 @@ def build_latex_ai_recommendation(ai_insights, grade, fallback_quality_assessmen
         "recommended_product": recommended_product,
         "recommended_uses": recommended_uses[:8],
         "expected_quality": f"Grade {grade}",
-        "market_analysis": market_analysis
+        "market_analysis": market_analysis,
+        "prompt_recommendations": prompt_recommendations[:8],
+        "suggestions": suggestions[:12]
     }
 
 def get_dominant_color_name(img, mask=None):
@@ -377,107 +390,25 @@ def count_spots(img):
 
 def classify_content(img):
     """
-    PRIORITIZES Generic Classifier (YOLOv11-cls) to filter out non-plant objects.
-    Then uses Leaf Model (best.pt) for specific confirmation if needed.
+    Uses Leaf-v2 and Trunks-v2 spatial detections to determine the primary part.
     """
-    
-    primary_part = 'unknown'
-    confidence = 0.0
-    
-    # 1. First, check if it's even a plant/tree using Generic ImageNet Model
-    if YOLO_AVAILABLE:
-        try:
-            model = get_cls_model()
-            if model:
-                results = model(img, verbose=False)
-                
-                # Check top 5 classes
-                top5 = results[0].probs.top5
-                names = results[0].names
-                
-                trunk_keywords = ['bark', 'trunk', 'wood', 'log', 'tree']
-                leaf_keywords = ['leaf', 'foliage', 'plant', 'flower', 'green', 'vegetable', 'fruit', 'herb', 'shrub'] 
-                non_plant_keywords = [
-                    'wall', 'floor', 'paper', 'rock', 'sand', 'soil', 'fabric', 'plastic', 
-                    'keyboard', 'computer', 'laptop', 'screen', 'monitor', 'mouse', 
-                    'electronic', 'device', 'furniture', 'table', 'desk', 'room', 
-                    'interior', 'man-made', 'text', 'book', 'writing'
-                ]
-                
-                trunk_score = 0.0
-                leaf_score = 0.0
-                non_plant_score = 0.0
-                
-                for idx in top5:
-                    class_name = names[idx].lower()
-                    score = float(results[0].probs.data[idx])
-                    
-                    if any(k in class_name for k in trunk_keywords):
-                        trunk_score += score
-                    elif any(k in class_name for k in leaf_keywords):
-                        leaf_score += score
-                    elif any(k in class_name for k in non_plant_keywords):
-                        non_plant_score += score
-                        
-                    confidence = max(confidence, score)
-                
-                # Strict filtering logic
-                # 1. HARD REJECT if non-plant score is dominant
-                # User Feedback: "keyboard detected as leaf" -> We need this.
-                # User Feedback: "clear trunk detected as not trunk" -> We need to be less strict.
-                # Changed from 0.4 to 0.6 to allow more ambiguity.
-                if non_plant_score > 0.6 and leaf_score < 0.2 and trunk_score < 0.2:
-                     sys.stderr.write(f"⚠️ [Python ML] Generic model detected NON-PLANT object. Non-Plant Score: {non_plant_score:.2f}\n")
-                     primary_part = 'unknown'
-                
-                # 2. Require reasonable plant score
-                elif leaf_score > 0.15 or trunk_score > 0.15:
-                    # It's likely a plant
-                    if trunk_score > leaf_score:
-                        primary_part = 'trunk'
-                    else:
-                        primary_part = 'leaf'
-                else:
-                    # Likely not a plant (or very unsure)
-                    sys.stderr.write(f"⚠️ [Python ML] Generic model did not detect plant features. Top 1: {names[top5[0]]}\n")
-                    primary_part = 'unknown'
+    leaf_valid, leaf_conf, _ = leaf_has_spatial_detection(img, min_conf=0.35)
+    trunk_valid, trunk_conf, _ = trunk_has_spatial_detection(img, min_conf=0.22)
 
-        except Exception as e:
-            sys.stderr.write(f"⚠️ [Python ML] Generic model check failed: {e}\n")
+    if leaf_valid or trunk_valid:
+        if leaf_valid and trunk_valid:
+            primary_part = 'leaf' if leaf_conf >= trunk_conf else 'trunk'
+            confidence = max(float(leaf_conf), float(trunk_conf))
+        elif leaf_valid:
+            primary_part = 'leaf'
+            confidence = float(leaf_conf)
+        else:
+            primary_part = 'trunk'
+            confidence = float(trunk_conf)
 
-    # 2. If Generic thinks it's a leaf (or is unsure), VALIDATE with Leaf Model
-    #    If Generic thinks it's 'unknown', we give Leaf Model a chance ONLY if confidence was low
-    if primary_part == 'leaf' or (primary_part == 'unknown' and confidence < 0.3):
-        leaf_model = get_leaf_model()
-        if leaf_model:
-            try:
-                # Run inference
-                results = leaf_model(img, verbose=False)
-                probs = results[0].probs
-                top1_conf = float(probs.top1conf.item())
-                
-                # Dynamic Thresholding:
-                # If Generic detected 'leaf', we accept lower confidence (0.35)
-                # If Generic was 'unknown', we need HIGHER confidence (0.55) to override
-                required_conf = 0.35 if primary_part == 'leaf' else 0.55
-                
-                if top1_conf > required_conf:
-                    sys.stderr.write(f"✅ [Python ML] Leaf Model identified content with confidence: {top1_conf:.2f} (Threshold: {required_conf})\n")
-                    return {'is_tree': True, 'primary_part': 'leaf', 'confidence': top1_conf}
-                else:
-                    sys.stderr.write(f"⚠️ [Python ML] Leaf Model low confidence: {top1_conf:.2f} (Threshold: {required_conf})\n")
-                    # If Generic thought it was a leaf but Leaf Model disagrees heavily?
-                    # We stick with Generic's decision if it was confident, otherwise downgrade to unknown
-                    if primary_part == 'leaf' and confidence < 0.4:
-                        primary_part = 'unknown'
-
-            except Exception as e:
-                 sys.stderr.write(f"⚠️ [Python ML] Leaf Model classification check failed: {e}\n")
-
-    if primary_part != 'unknown': 
         return {'is_tree': True, 'primary_part': primary_part, 'confidence': confidence}
-        
-    return {'is_tree': False, 'primary_part': 'unknown', 'confidence': confidence}
+
+    return {'is_tree': False, 'primary_part': 'unknown', 'confidence': 0.0}
 
 def download_image(url):
     try:
@@ -498,6 +429,417 @@ def download_image(url):
     except Exception as e:
         sys.stderr.write(f"Error downloading image: {str(e)}\n")
         return None
+
+def _leaf_env_float(name, default_value):
+    try:
+        return float(os.environ.get(name, default_value))
+    except Exception:
+        return float(default_value)
+
+def _leaf_env_int(name, default_value):
+    try:
+        return int(os.environ.get(name, default_value))
+    except Exception:
+        return int(default_value)
+
+def _leaf_detection_thresholds(min_conf=None):
+    requested_conf = _leaf_env_float('LEAF_STRICT_MIN_CONF', 0.35) if min_conf is None else float(min_conf)
+    return {
+        "min_conf": max(0.05, min(requested_conf, 0.99)),
+        "min_area_ratio": max(0.0005, _leaf_env_float('LEAF_MIN_AREA_RATIO', 0.0025)),
+        "max_area_ratio": min(0.995, _leaf_env_float('LEAF_MAX_AREA_RATIO', 0.98)),
+        "min_mask_overlap": max(0.05, min(_leaf_env_float('LEAF_MIN_MASK_OVERLAP', 0.12), 1.0)),
+        "min_frame_leaf_ratio": max(0.0005, _leaf_env_float('LEAF_MIN_FRAME_LEAF_RATIO', 0.004))
+    }
+
+def _leaf_detection_metrics(det_type, geometry, img_shape, leaf_mask):
+    if img_shape is None or len(img_shape) < 2:
+        return None
+
+    img_h, img_w = img_shape[:2]
+    if img_h <= 0 or img_w <= 0:
+        return None
+
+    det_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    det_area = 0.0
+
+    if det_type == "obb":
+        pts = np.array(geometry).reshape((-1, 2)).astype(np.int32)
+        if pts.shape[0] < 3:
+            return None
+        cv2.fillPoly(det_mask, [pts], 255)
+        det_area = float(abs(cv2.contourArea(pts)))
+    elif det_type == "box":
+        x1, y1, x2, y2 = [int(v) for v in np.array(geometry).flatten().tolist()]
+        x1 = max(0, min(img_w - 1, x1))
+        y1 = max(0, min(img_h - 1, y1))
+        x2 = max(0, min(img_w - 1, x2))
+        y2 = max(0, min(img_h - 1, y2))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        cv2.rectangle(det_mask, (x1, y1), (x2, y2), 255, thickness=cv2.FILLED)
+        det_area = float((x2 - x1) * (y2 - y1))
+    else:
+        return None
+
+    frame_pixels = float(max(img_h * img_w, 1))
+    area_ratio = det_area / frame_pixels
+
+    det_pixels = float(cv2.countNonZero(det_mask))
+    if det_pixels <= 0:
+        return None
+
+    overlap_ratio = 0.0
+    if leaf_mask is not None:
+        overlap_pixels = float(cv2.countNonZero(cv2.bitwise_and(det_mask, leaf_mask)))
+        overlap_ratio = overlap_pixels / det_pixels if det_pixels > 0 else 0.0
+
+    return {
+        "area_ratio": area_ratio,
+        "overlap_ratio": overlap_ratio
+    }
+
+def _extract_filtered_leaf_detections(result, img, leaf_mask, min_conf=None):
+    thresholds = _leaf_detection_thresholds(min_conf)
+    names = result.names if hasattr(result, 'names') else {}
+
+    def get_leaf_class_name(class_id):
+        cid = int(class_id)
+        if isinstance(names, dict):
+            return str(names.get(cid, cid))
+        if isinstance(names, (list, tuple)) and 0 <= cid < len(names):
+            return str(names[cid])
+        return str(cid)
+
+    candidates = []
+    filtered = []
+
+    def passes_quality(entry):
+        conf = float(entry.get("conf") or 0.0)
+        area_ratio = float(entry.get("area_ratio") or 0.0)
+        overlap_ratio = float(entry.get("overlap_ratio") or 0.0)
+
+        if not (thresholds["min_area_ratio"] <= area_ratio <= thresholds["max_area_ratio"]):
+            return False
+
+        required_conf = thresholds["min_conf"]
+        # Large full-frame detections and very tiny detections need extra confidence.
+        if area_ratio > 0.90:
+            required_conf = max(required_conf, 0.55)
+        elif area_ratio < 0.01:
+            required_conf = max(required_conf, 0.45)
+
+        if conf < required_conf:
+            return False
+
+        if overlap_ratio < thresholds["min_mask_overlap"]:
+            return False
+
+        return True
+
+    if hasattr(result, 'obb') and result.obb is not None and len(result.obb) > 0:
+        for idx in range(len(result.obb)):
+            conf = float(result.obb.conf[idx].item())
+            cls_id = int(result.obb.cls[idx].item())
+            geometry = result.obb.xyxyxyxy[idx].cpu().numpy().astype(int)
+            metrics = _leaf_detection_metrics("obb", geometry, img.shape, leaf_mask)
+            if metrics is None:
+                continue
+
+            entry = {
+                "det_type": "obb",
+                "class_id": cls_id,
+                "class_name": get_leaf_class_name(cls_id).strip(),
+                "conf": conf,
+                "obb": geometry,
+                "box": None,
+                "area_ratio": metrics["area_ratio"],
+                "overlap_ratio": metrics["overlap_ratio"]
+            }
+            candidates.append(entry)
+
+            if passes_quality(entry):
+                filtered.append(entry)
+
+    elif hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
+        for idx in range(len(result.boxes)):
+            conf = float(result.boxes.conf[idx].item())
+            cls_id = int(result.boxes.cls[idx].item())
+            geometry = result.boxes.xyxy[idx].cpu().numpy().astype(int)
+            metrics = _leaf_detection_metrics("box", geometry, img.shape, leaf_mask)
+            if metrics is None:
+                continue
+
+            entry = {
+                "det_type": "box",
+                "class_id": cls_id,
+                "class_name": get_leaf_class_name(cls_id).strip(),
+                "conf": conf,
+                "obb": None,
+                "box": geometry,
+                "area_ratio": metrics["area_ratio"],
+                "overlap_ratio": metrics["overlap_ratio"]
+            }
+            candidates.append(entry)
+
+            if passes_quality(entry):
+                filtered.append(entry)
+
+    return filtered, candidates, thresholds
+
+def leaf_has_spatial_detection(img, min_conf=0.35):
+    """
+    Strict leaf validation using Leaf-v2 spatial detections only (OBB/boxes)
+    with confidence + geometry + leaf-mask overlap checks.
+    Returns: (is_valid, best_conf, detected_count)
+    """
+    model = get_leaf_model()
+    if model is None or img is None:
+        return False, 0.0, 0
+
+    try:
+        leaf_mask = get_leaf_mask(img)
+        thresholds = _leaf_detection_thresholds(min_conf)
+
+        frame_pixels = float(max(img.shape[0] * img.shape[1], 1))
+        leaf_pixels = float(cv2.countNonZero(leaf_mask)) if leaf_mask is not None else 0.0
+        leaf_frame_ratio = leaf_pixels / frame_pixels
+        if leaf_frame_ratio < thresholds["min_frame_leaf_ratio"]:
+            return False, 0.0, 0
+
+        results = model(img, verbose=False, conf=max(0.10, thresholds["min_conf"] * 0.5))
+        if not results:
+            return False, 0.0, 0
+
+        filtered, candidates, _ = _extract_filtered_leaf_detections(results[0], img, leaf_mask, min_conf=thresholds["min_conf"])
+        best_conf = max([float(item["conf"]) for item in candidates], default=0.0)
+        valid_best_conf = max([float(item["conf"]) for item in filtered], default=0.0)
+        return len(filtered) > 0, (valid_best_conf if filtered else best_conf), len(filtered)
+    except Exception as e:
+        sys.stderr.write(f"[Python ML] Leaf spatial validation failed: {e}\n")
+        return False, 0.0, 0
+
+def _trunk_env_float(name, default_value):
+    try:
+        return float(os.environ.get(name, default_value))
+    except Exception:
+        return float(default_value)
+
+def _trunk_detection_thresholds(min_conf=None):
+    requested_conf = _trunk_env_float('TRUNK_STRICT_MIN_CONF', 0.22) if min_conf is None else float(min_conf)
+    return {
+        "min_conf": max(0.05, min(requested_conf, 0.99)),
+        "min_area_ratio": max(0.0008, _trunk_env_float('TRUNK_MIN_AREA_RATIO', 0.0020)),
+        "max_area_ratio": min(0.995, _trunk_env_float('TRUNK_MAX_AREA_RATIO', 0.985)),
+        "min_mask_overlap": max(0.02, min(_trunk_env_float('TRUNK_MIN_MASK_OVERLAP', 0.06), 1.0)),
+        "min_frame_trunk_ratio": max(0.0005, _trunk_env_float('TRUNK_MIN_FRAME_RATIO', 0.003))
+    }
+
+def get_trunk_mask(img):
+    if img is None:
+        return None
+
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+    # Bark/brown tones
+    lower_brown1 = np.array([0, 30, 20])
+    upper_brown1 = np.array([20, 255, 220])
+    mask_brown1 = cv2.inRange(hsv, lower_brown1, upper_brown1)
+
+    lower_brown2 = np.array([160, 20, 20])
+    upper_brown2 = np.array([180, 255, 220])
+    mask_brown2 = cv2.inRange(hsv, lower_brown2, upper_brown2)
+
+    # Gray bark tones
+    lower_gray = np.array([0, 0, 20])
+    upper_gray = np.array([180, 70, 210])
+    mask_gray = cv2.inRange(hsv, lower_gray, upper_gray)
+
+    # Dark trunk/bark shadow tones
+    lower_dark = np.array([0, 0, 0])
+    upper_dark = np.array([180, 120, 110])
+    mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
+
+    mask = cv2.bitwise_or(mask_brown1, mask_brown2)
+    mask = cv2.bitwise_or(mask, mask_gray)
+    mask = cv2.bitwise_or(mask, mask_dark)
+
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    return mask
+
+def _trunk_detection_metrics(det_type, geometry, img_shape, trunk_mask):
+    if img_shape is None or len(img_shape) < 2:
+        return None
+
+    img_h, img_w = img_shape[:2]
+    if img_h <= 0 or img_w <= 0:
+        return None
+
+    det_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    det_area = 0.0
+
+    if det_type == "obb":
+        pts = np.array(geometry).reshape((-1, 2)).astype(np.int32)
+        if pts.shape[0] < 3:
+            return None
+        cv2.fillPoly(det_mask, [pts], 255)
+        det_area = float(abs(cv2.contourArea(pts)))
+    elif det_type == "box":
+        x1, y1, x2, y2 = [int(v) for v in np.array(geometry).flatten().tolist()]
+        x1 = max(0, min(img_w - 1, x1))
+        y1 = max(0, min(img_h - 1, y1))
+        x2 = max(0, min(img_w - 1, x2))
+        y2 = max(0, min(img_h - 1, y2))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        cv2.rectangle(det_mask, (x1, y1), (x2, y2), 255, thickness=cv2.FILLED)
+        det_area = float((x2 - x1) * (y2 - y1))
+    else:
+        return None
+
+    frame_pixels = float(max(img_h * img_w, 1))
+    area_ratio = det_area / frame_pixels
+    det_pixels = float(cv2.countNonZero(det_mask))
+    if det_pixels <= 0:
+        return None
+
+    overlap_ratio = 0.0
+    if trunk_mask is not None:
+        overlap_pixels = float(cv2.countNonZero(cv2.bitwise_and(det_mask, trunk_mask)))
+        overlap_ratio = overlap_pixels / det_pixels if det_pixels > 0 else 0.0
+
+    return {
+        "area_ratio": area_ratio,
+        "overlap_ratio": overlap_ratio
+    }
+
+def _extract_filtered_trunk_detections(result, img, trunk_mask, min_conf=None):
+    thresholds = _trunk_detection_thresholds(min_conf)
+    names = result.names if hasattr(result, 'names') else {}
+
+    def get_trunk_class_name(class_id):
+        cid = int(class_id)
+        if isinstance(names, dict):
+            return str(names.get(cid, cid))
+        if isinstance(names, (list, tuple)) and 0 <= cid < len(names):
+            return str(names[cid])
+        return str(cid)
+
+    candidates = []
+    filtered = []
+
+    def passes_quality(entry):
+        conf = float(entry.get("conf") or 0.0)
+        area_ratio = float(entry.get("area_ratio") or 0.0)
+        overlap_ratio = float(entry.get("overlap_ratio") or 0.0)
+
+        if not (thresholds["min_area_ratio"] <= area_ratio <= thresholds["max_area_ratio"]):
+            return False
+
+        required_conf = thresholds["min_conf"]
+        if area_ratio > 0.90:
+            required_conf = max(required_conf, 0.50)
+        elif area_ratio < 0.01:
+            required_conf = max(required_conf, 0.35)
+
+        if conf < required_conf:
+            return False
+
+        high_conf_override = conf >= 0.80 and 0.01 <= area_ratio <= 0.80
+        if overlap_ratio < thresholds["min_mask_overlap"] and not high_conf_override:
+            return False
+
+        return True
+
+    if hasattr(result, 'obb') and result.obb is not None and len(result.obb) > 0:
+        for idx in range(len(result.obb)):
+            conf = float(result.obb.conf[idx].item())
+            cls_id = int(result.obb.cls[idx].item())
+            geometry = result.obb.xyxyxyxy[idx].cpu().numpy().astype(int)
+            metrics = _trunk_detection_metrics("obb", geometry, img.shape, trunk_mask)
+            if metrics is None:
+                continue
+            entry = {
+                "det_type": "obb",
+                "class_id": cls_id,
+                "class_name": get_trunk_class_name(cls_id).strip(),
+                "conf": conf,
+                "obb": geometry,
+                "box": None,
+                "area_ratio": metrics["area_ratio"],
+                "overlap_ratio": metrics["overlap_ratio"]
+            }
+            candidates.append(entry)
+            if passes_quality(entry):
+                filtered.append(entry)
+    elif hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
+        for idx in range(len(result.boxes)):
+            conf = float(result.boxes.conf[idx].item())
+            cls_id = int(result.boxes.cls[idx].item())
+            geometry = result.boxes.xyxy[idx].cpu().numpy().astype(int)
+            metrics = _trunk_detection_metrics("box", geometry, img.shape, trunk_mask)
+            if metrics is None:
+                continue
+            entry = {
+                "det_type": "box",
+                "class_id": cls_id,
+                "class_name": get_trunk_class_name(cls_id).strip(),
+                "conf": conf,
+                "obb": None,
+                "box": geometry,
+                "area_ratio": metrics["area_ratio"],
+                "overlap_ratio": metrics["overlap_ratio"]
+            }
+            candidates.append(entry)
+            if passes_quality(entry):
+                filtered.append(entry)
+
+    return filtered, candidates, thresholds
+
+def trunk_has_spatial_detection(img, min_conf=0.22):
+    """
+    Strict trunk validation using Trunks-v2 spatial detections only (OBB/boxes)
+    with confidence + geometry + trunk-mask overlap checks.
+    Returns: (is_valid, best_conf, detected_count)
+    """
+    model = get_trunk_model()
+    if model is None or img is None:
+        return False, 0.0, 0
+
+    try:
+        trunk_mask = get_trunk_mask(img)
+        thresholds = _trunk_detection_thresholds(min_conf)
+
+        frame_pixels = float(max(img.shape[0] * img.shape[1], 1))
+        trunk_pixels = float(cv2.countNonZero(trunk_mask)) if trunk_mask is not None else 0.0
+        trunk_frame_ratio = trunk_pixels / frame_pixels
+        if trunk_frame_ratio < thresholds["min_frame_trunk_ratio"]:
+            return False, 0.0, 0
+
+        results = model(img, verbose=False, conf=max(0.03, thresholds["min_conf"] * 0.5))
+        if not results:
+            return False, 0.0, 0
+
+        filtered, candidates, _ = _extract_filtered_trunk_detections(
+            results[0], img, trunk_mask, min_conf=thresholds["min_conf"]
+        )
+
+        if not filtered and not candidates:
+            low_conf_results = model(img, verbose=False, conf=0.03)
+            if low_conf_results:
+                filtered, candidates, _ = _extract_filtered_trunk_detections(
+                    low_conf_results[0], img, trunk_mask, min_conf=thresholds["min_conf"]
+                )
+
+        best_conf = max([float(item["conf"]) for item in candidates], default=0.0)
+        valid_best_conf = max([float(item["conf"]) for item in filtered], default=0.0)
+        return len(filtered) > 0, (valid_best_conf if filtered else best_conf), len(filtered)
+    except Exception as e:
+        sys.stderr.write(f"[Python ML] Trunk spatial validation failed: {e}\n")
+        return False, 0.0, 0
 
 def estimate_latex_presence_ratio(img):
     """
@@ -626,91 +968,161 @@ def get_leaf_mask(img):
 
 def analyze_leaf_with_model(img, image_path_for_saving):
     """
-    Uses the trained Leaf Disease Model (Leaf.pt) for analysis.
+    Uses the trained Leaf Disease Model (Leaf-v2.pt preferred) for analysis.
     Integrates Groq API for detailed insights.
     """
     model = get_leaf_model()
-    
-    # Default values
-    disease_name = "Unknown"
-    confidence = 0.0
-    severity = "low"
-    spot_count = 0
-    recommendation = "Maintain regular monitoring."
     processed_image_path = None
     color_name = "Green"
-    
+
     if model:
         try:
-            results = model(img, verbose=False)
-            probs = results[0].probs
-            top1_index = probs.top1
-            disease_name = results[0].names[top1_index]
-            confidence = float(probs.top1conf.item()) * 100
-            
-            # --- Visual Analysis & Masking ---
-            # Create mask to isolate leaf from background
+            results = model(img, verbose=False, conf=0.18)
+            result = results[0]
             leaf_mask = get_leaf_mask(img)
-            masked_img = img.copy()
-            masked_img[leaf_mask == 0] = [0, 0, 0] # Set background to black
-            
-            # 1. Spot Counting (Use masked image to avoid background noise)
-            spot_count, spotted_img = count_spots(masked_img)
-            
-            # 2. Color Analysis (Use masked image)
-            color_name = get_dominant_color_name(img, mask=leaf_mask)
-            
-            # Use spotted_img (which is based on masked_img) for final visualization
-            vis_img = spotted_img if spotted_img is not None else masked_img.copy()
-            
-            # --- Severity Logic ---
-            label_text = f"{disease_name.upper()} ({confidence:.1f}%)"
-            disease_name_lower = disease_name.lower().strip()
-            disease_terms = [
-                "disease", "blight", "spot", "mildew", "rot",
-                "canker", "infect", "rust", "pustule"
-            ]
-            is_healthy_label = (
-                "no disease" in disease_name_lower
-                or ("healthy" in disease_name_lower and not any(term in disease_name_lower for term in disease_terms))
+            if leaf_mask is None:
+                leaf_mask = np.ones(img.shape[:2], dtype=np.uint8) * 255
+
+            def leaf_severity_and_recommendation(class_name, conf_value):
+                name = str(class_name or "").strip()
+                name_lower = name.lower()
+                disease_terms = [
+                    "disease", "blight", "spot", "mildew", "rot",
+                    "canker", "infect", "rust", "pustule", "lesion", "necrosis", "mold"
+                ]
+                is_healthy = (
+                    "no disease" in name_lower
+                    or ("healthy" in name_lower and not any(term in name_lower for term in disease_terms))
+                )
+                if is_healthy:
+                    return "none", "Tree is healthy. Continue routine care."
+
+                if conf_value >= 85:
+                    severity = "critical"
+                elif conf_value >= 70:
+                    severity = "high"
+                elif conf_value >= 45:
+                    severity = "moderate"
+                else:
+                    severity = "low"
+
+                recommendation = "Maintain regular monitoring."
+                if "mildew" in name_lower:
+                    recommendation = "Apply sulfur-based fungicide immediately and improve airflow."
+                elif "spot" in name_lower:
+                    recommendation = "Apply copper-based fungicide and remove infected fallen leaves."
+                elif "blight" in name_lower:
+                    recommendation = "Isolate infected areas and avoid tapping until recovered."
+                return severity, recommendation
+
+            def severity_to_color(level):
+                sev = str(level or "").lower()
+                if sev == "none":
+                    return (0, 200, 0)
+                if sev in ("critical", "high"):
+                    return (0, 0, 255)
+                if sev == "moderate":
+                    return (0, 165, 255)
+                if sev == "low":
+                    return (0, 255, 255)
+                return (255, 80, 0)
+
+            filtered_detections, candidate_detections, thresholds = _extract_filtered_leaf_detections(
+                result,
+                img,
+                leaf_mask,
+                min_conf=None
             )
 
-            if is_healthy_label:
-                severity = "none"
-                recommendation = "Tree is healthy. Continue routine care."
-                color_cv = (0, 255, 0) # Green
-            else:
-                label_text += f" | Spots: {spot_count}"
-                
-                # Dynamic severity based on spot count and disease type
-                if spot_count > 50:
-                    severity = "critical"
-                    color_cv = (0, 0, 255) # Red
-                elif spot_count > 20:
-                    severity = "high"
-                    color_cv = (0, 165, 255) # Orange
+            if candidate_detections and len(filtered_detections) < len(candidate_detections):
+                sys.stderr.write(
+                    f"[Python ML] Leaf filter kept {len(filtered_detections)}/{len(candidate_detections)} "
+                    f"(min_conf={thresholds['min_conf']:.2f}, min_overlap={thresholds['min_mask_overlap']:.2f}, "
+                    f"area={thresholds['min_area_ratio']:.3f}-{thresholds['max_area_ratio']:.3f}).\n"
+                )
+
+            detections = []
+            for det in filtered_detections:
+                name = str(det.get("class_name") or "Unknown").strip()
+                conf = float(det.get("conf") or 0) * 100
+                severity, recommendation = leaf_severity_and_recommendation(name, conf)
+                detections.append({
+                    "name": name if name else "Unknown",
+                    "confidence": conf,
+                    "severity": severity,
+                    "recommendation": recommendation,
+                    "det_type": det.get("det_type"),
+                    "obb": det.get("obb"),
+                    "box": det.get("box")
+                })
+
+            if not detections:
+                return {"error": "Leaf and trunk not detected. Please try again."}
+
+            detections.sort(key=lambda item: float(item.get("confidence", 0) or 0), reverse=True)
+            max_detections = max(1, _leaf_env_int('LEAF_MAX_DETECTIONS', 8))
+            if len(detections) > max_detections:
+                detections = detections[:max_detections]
+            primary_index = next(
+                (idx for idx, item in enumerate(detections) if str(item.get("severity") or "").lower() != "none"),
+                0
+            )
+            if primary_index > 0:
+                detections = [detections[primary_index]] + detections[:primary_index] + detections[primary_index + 1:]
+            primary_detection = detections[0]
+
+            disease_name = str(primary_detection.get("name") or "Unknown")
+            confidence = float(primary_detection.get("confidence") or 0)
+
+            masked_img = img.copy()
+            masked_img[leaf_mask == 0] = [0, 0, 0]
+            color_name = get_dominant_color_name(img, mask=leaf_mask)
+            vis_img = img.copy()
+
+            fallback_label_y = 28
+            for det in detections:
+                det_name = str(det.get("name") or "Unknown").strip()
+                det_conf = float(det.get("confidence") or 0)
+                det_color = severity_to_color(det.get("severity"))
+                label_text = f"{det_name} ({det_conf:.1f}%)"
+                label_anchor = (10, 28)
+
+                if det.get("det_type") == "obb" and det.get("obb") is not None:
+                    obb_points = np.array(det["obb"]).astype(int)
+                    pts = obb_points.reshape((-1, 1, 2))
+                    cv2.polylines(vis_img, [pts], True, det_color, 3)
+                    min_xy = np.min(obb_points, axis=0)
+                    label_anchor = (int(max(min_xy[0], 10)), int(max(min_xy[1] - 10, 24)))
+                elif det.get("det_type") == "box" and det.get("box") is not None:
+                    x1, y1, x2, y2 = [int(v) for v in np.array(det["box"]).flatten().tolist()]
+                    cv2.rectangle(vis_img, (x1, y1), (x2, y2), det_color, 3)
+                    label_anchor = (max(x1, 10), max(y1 - 10, 24))
                 else:
-                    severity = "moderate"
-                    color_cv = (0, 255, 255) # Yellow
+                    continue
 
-            # --- AI Insights (Groq) ---
-            sys.stderr.write(f"🧠 [Python ML] Requesting detailed analysis from Groq for {disease_name}...\n")
-            ai_insights = get_groq_analysis(disease_name, confidence, spot_count, color_name)
-            
-            if ai_insights and text_says_healthy(ai_insights.get("diagnosis")):
-                is_healthy_label = True
-                severity = "none"
-                disease_name = "No disease detected"
-                recommendation = "Tree is healthy. Continue routine care."
-                color_cv = (0, 255, 0)
-                label_text = f"{disease_name.upper()} ({confidence:.1f}%)"
+                cv2.putText(
+                    vis_img,
+                    label_text,
+                    label_anchor,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    det_color,
+                    2
+                )
 
-            if ai_insights and not is_healthy_label:
-                raw_treatment = ai_insights.get("treatment", recommendation)
+            sys.stderr.write(f"[Python ML] Requesting detailed analysis from Groq for {disease_name}...\n")
+            ai_insights = get_groq_analysis(disease_name, confidence, 0, color_name)
+
+            all_detections_healthy = all(str(det.get("severity") or "").lower() == "none" for det in detections)
+            if ai_insights and text_says_healthy(ai_insights.get("diagnosis")) and all_detections_healthy:
+                primary_detection["name"] = "No disease detected"
+                primary_detection["severity"] = "none"
+                primary_detection["recommendation"] = "Tree is healthy. Continue routine care."
+            elif ai_insights:
+                raw_treatment = ai_insights.get("treatment", primary_detection.get("recommendation", ""))
                 if isinstance(raw_treatment, list):
                     recommendation = "; ".join(raw_treatment)
                 elif isinstance(raw_treatment, dict):
-                    # Flatten dict to string
                     parts = []
                     for k, v in raw_treatment.items():
                         val_str = ", ".join(v) if isinstance(v, list) else str(v)
@@ -718,29 +1130,45 @@ def analyze_leaf_with_model(img, image_path_for_saving):
                     recommendation = " | ".join(parts)
                 else:
                     recommendation = str(raw_treatment)
-                
-            # Cap confidence for display
-            if confidence >= 100.0: confidence = 99.9
+                if recommendation.strip():
+                    primary_detection["recommendation"] = recommendation
 
-            # Draw text on image
-            cv2.putText(vis_img, label_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_cv, 2)
-            
-            # Save processed image
             script_dir = os.path.dirname(os.path.abspath(__file__))
             temp_dir = os.path.join(script_dir, 'temp_output')
             if not os.path.exists(temp_dir):
                 os.makedirs(temp_dir)
-                
+
             timestamp = int(time.time())
             processed_filename = f"processed_{timestamp}_{os.path.basename(image_path_for_saving)}"
-            if 'http' in processed_filename: # Sanitize
+            if 'http' in processed_filename:
                 processed_filename = f"processed_{timestamp}.jpg"
-                
+
             processed_image_path = os.path.join(temp_dir, processed_filename)
             cv2.imwrite(processed_image_path, vis_img)
-            
-            # --- Final Response Construction ---
-            # Prepare prevention suggestions (flatten if needed)
+
+            primary_ai_diagnosis = (
+                ai_insights.get("diagnosis", "No detailed diagnosis available.")
+                if ai_insights else None
+            )
+
+            normalized_detections = []
+            for idx, det in enumerate(detections):
+                normalized_detections.append({
+                    "name": str(det.get("name") or "Unknown").strip(),
+                    "confidence": float(det.get("confidence") or 0),
+                    "severity": str(det.get("severity") or "unknown").strip().lower(),
+                    "recommendation": (
+                        str(primary_detection.get("recommendation") or "").strip()
+                        if idx == 0 else str(det.get("recommendation") or "").strip()
+                    ),
+                    "ai_diagnosis": primary_ai_diagnosis if idx == 0 else None
+                })
+
+            has_diseased_detection = any(
+                str(det.get("severity") or "").lower() != "none"
+                for det in normalized_detections
+            )
+
             prevention_raw = ai_insights.get("prevention", "Monitor regularly.") if ai_insights else "Monitor regularly."
             prevention_list = []
             if isinstance(prevention_raw, list):
@@ -755,60 +1183,54 @@ def analyze_leaf_with_model(img, image_path_for_saving):
             tappability_advice = ai_insights.get("tappability_advice", "Check health before tapping.") if ai_insights else "Check health before tapping."
 
             return {
-                "diseaseDetection": [{
-                    "name": disease_name,
-                    "confidence": confidence,
-                    "severity": severity,
-                    "recommendation": recommendation,
-                    "ai_diagnosis": ai_insights.get("diagnosis", "No detailed diagnosis available.") if ai_insights else None
-                }],
+                "diseaseDetection": normalized_detections,
                 "leafAnalysis": {
-                    "healthStatus": "healthy" if severity == "none" else "diseased",
-                    "spotCount": spot_count,
+                    "healthStatus": "diseased" if has_diseased_detection else "healthy",
                     "color": color_name,
-                    "detailed_analysis": ai_insights # Include full AI object
+                    "detailed_analysis": ai_insights,
+                    "diseases": [
+                        {
+                            "name": det["name"],
+                            "confidence": det["confidence"],
+                            "severity": det["severity"]
+                        }
+                        for det in normalized_detections
+                    ]
                 },
                 "processed_image_path": processed_image_path,
-                # Use AI advice for productivity if available, else generate default
                 "productivityRecommendation": {
-                    "status": "optimal" if severity == "none" else "at_risk",
-                    "suggestions": prevention_list + [tappability_advice] if ai_insights else generate_productivity_recommendation(
-                        "healthy" if severity == "none" else "diseased", 
-                        disease_name, 
-                        severity == "none", 
-                        severity
-                    )["suggestions"]
+                    "status": "optimal" if not has_diseased_detection else "at_risk",
+                    "suggestions": prevention_list + [tappability_advice] if ai_insights else [
+                        str(normalized_detections[0].get("recommendation") or "Maintain regular monitoring.")
+                    ]
                 }
             }
 
         except Exception as e:
             sys.stderr.write(f"Leaf model inference failed: {e}\n")
-            # Return basic error structure but try to survive
             return {
                 "diseaseDetection": [{"name": "Error", "confidence": 0, "severity": "unknown", "recommendation": "Analysis failed."}],
                 "leafAnalysis": {
                     "healthStatus": "unknown",
-                    "spotCount": 0,
                     "color": "Unknown",
-                    "detailed_analysis": None
+                    "detailed_analysis": None,
+                    "diseases": []
                 },
                 "processed_image_path": None,
                 "productivityRecommendation": {"status": "unknown", "suggestions": []}
             }
-    
-    # Fallback if model load failed
+
     return {
         "diseaseDetection": [{"name": "System Error", "confidence": 0, "severity": "unknown", "recommendation": "Model unavailable."}],
         "leafAnalysis": {
             "healthStatus": "unknown",
-            "spotCount": 0,
             "color": "Unknown",
-            "detailed_analysis": None
+            "detailed_analysis": None,
+            "diseases": []
         },
         "processed_image_path": None,
         "productivityRecommendation": {"status": "unknown", "suggestions": []}
     }
-
 def main():
     if len(sys.argv) < 3:
         print(json.dumps({"error": "Missing arguments"}))
@@ -828,7 +1250,7 @@ def main():
             spot_count = data.get('spot_count', 0)
             color_name = data.get('color_name', 'Green')
             
-            sys.stderr.write(f"🧠 [Python AI] Generating suggestions for {disease_name}...\n")
+            sys.stderr.write(f"ÃƒÂ°Ã…Â¸Ã‚Â§Ã‚Â  [Python AI] Generating suggestions for {disease_name}...\n")
             
             ai_insights = get_groq_analysis(disease_name, confidence, spot_count, color_name)
             
@@ -846,7 +1268,7 @@ def main():
             return
 
         except Exception as e:
-             sys.stderr.write(f"❌ [Python AI] Error parsing input or generating suggestions: {e}\n")
+             sys.stderr.write(f"ÃƒÂ¢Ã‚ÂÃ…â€™ [Python AI] Error parsing input or generating suggestions: {e}\n")
              print(json.dumps({"error": str(e)}))
              return
 
@@ -855,7 +1277,7 @@ def main():
     raw_sub_mode = sys.argv[3] if len(sys.argv) > 3 else ''
     sub_mode = raw_sub_mode.strip().lower()
     
-    sys.stderr.write(f"ℹ️ [Python ML] Mode: {mode}, SubMode: '{sub_mode}' (Raw: '{raw_sub_mode}')\n")
+    sys.stderr.write(f"ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¹ÃƒÂ¯Ã‚Â¸Ã‚Â [Python ML] Mode: {mode}, SubMode: '{sub_mode}' (Raw: '{raw_sub_mode}')\n")
 
     img = download_image(image_url)
     if img is None:
@@ -868,59 +1290,57 @@ def main():
         
         is_user_specified_trunk = sub_mode == 'trunk'
         is_user_specified_leaf = sub_mode == 'leaf'
-        
-        # Only run generic classification if user didn't specify, OR to validate
-        classification = classify_content(img)
-        
-        # Override classification if user explicitly selected a mode.
-        # IMPORTANT: reject only on STRONG mismatch evidence to avoid false negatives.
+
+        leaf_valid, leaf_best_conf, _ = leaf_has_spatial_detection(img, min_conf=0.35)
+        trunk_valid, trunk_best_conf, _ = trunk_has_spatial_detection(img, min_conf=0.22)
+
+        if not leaf_valid and not trunk_valid:
+            sys.stderr.write("[Python ML] No leaf or trunk detections from v2 models.\n")
+            print(json.dumps({"error": "Leaf and trunk not detected. Please try again."}))
+            return
+
         if is_user_specified_trunk:
-            # Relaxed thresholds to reduce false rejections (User Feedback: clear trunks rejected)
-            strong_leaf_mismatch = (
-                classification['primary_part'] == 'leaf' and classification['confidence'] >= 0.75
-            )
-            strong_non_tree_mismatch = (
-                classification['primary_part'] == 'unknown'
-                and not classification['is_tree']
-                and classification['confidence'] >= 0.85
-            )
-
-            if strong_leaf_mismatch or strong_non_tree_mismatch:
-                 sys.stderr.write(
-                     f"❌ [Python ML] User specified 'Trunk', strong mismatch "
-                     f"(detected='{classification['primary_part']}', conf={classification['confidence']:.2f}). Rejecting.\n"
-                 )
-                 print(json.dumps({"error": "Detected part non-trunk only. Please try again."}))
-                 return
-
-            sys.stderr.write("✅ [Python ML] User specified 'Trunk' scan accepted.\n")
-            classification['primary_part'] = 'trunk'
-            classification['is_tree'] = True
-            classification['confidence'] = max(float(classification['confidence']), 0.35)
-
+            if not trunk_valid:
+                if leaf_valid:
+                    print(json.dumps({"error": "Detected part non-trunk only. Please try again."}))
+                else:
+                    print(json.dumps({"error": "Leaf and trunk not detected. Please try again."}))
+                return
+            sys.stderr.write("ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ [Python ML] User specified 'Trunk' scan accepted.\n")
+            classification = {
+                'is_tree': True,
+                'primary_part': 'trunk',
+                'confidence': max(float(trunk_best_conf), 0.35)
+            }
         elif is_user_specified_leaf:
-            # Relaxed thresholds to reduce false rejections
-            strong_trunk_mismatch = (
-                classification['primary_part'] == 'trunk' and classification['confidence'] >= 0.75
-            )
-            strong_non_tree_mismatch = (
-                classification['primary_part'] == 'unknown'
-                and not classification['is_tree']
-                and classification['confidence'] >= 0.85
-            )
+            if not leaf_valid:
+                if trunk_valid:
+                    print(json.dumps({"error": "Detected part non-leaf only. Please try again."}))
+                else:
+                    print(json.dumps({"error": "Leaf and trunk not detected. Please try again."}))
+                return
+            sys.stderr.write("[Python ML] User specified 'Leaf' scan accepted.\n")
+            classification = {
+                'is_tree': True,
+                'primary_part': 'leaf',
+                'confidence': max(float(leaf_best_conf), 0.35)
+            }
+        else:
+            if leaf_valid and trunk_valid:
+                primary_part = 'leaf' if float(leaf_best_conf) >= float(trunk_best_conf) else 'trunk'
+                confidence = max(float(leaf_best_conf), float(trunk_best_conf))
+            elif leaf_valid:
+                primary_part = 'leaf'
+                confidence = float(leaf_best_conf)
+            else:
+                primary_part = 'trunk'
+                confidence = float(trunk_best_conf)
 
-            if strong_trunk_mismatch or strong_non_tree_mismatch:
-                 sys.stderr.write(
-                     f"❌ [Python ML] User specified 'Leaf', strong mismatch "
-                     f"(detected='{classification['primary_part']}', conf={classification['confidence']:.2f}). Rejecting.\n"
-                 )
-                 print(json.dumps({"error": "Detected part non-leaf only. Please try again."}))
-                 return
-
-            sys.stderr.write("✅ [Python ML] User specified 'Leaf' scan accepted.\n")
-            classification['primary_part'] = 'leaf'
-            classification['is_tree'] = True
-            classification['confidence'] = max(float(classification['confidence']), 0.35)
+            classification = {
+                'is_tree': True,
+                'primary_part': primary_part,
+                'confidence': confidence
+            }
         
         base_confidence = classification['confidence'] * 100
         
@@ -936,8 +1356,19 @@ def main():
         
         # Logic: If it's a leaf scan (user specified OR detected)
         if classification['primary_part'] == 'leaf':
+            if not leaf_valid:
+                sys.stderr.write(
+                    f"[Python ML] Leaf branch blocked - no valid Leaf-v2 boxes/OBB "
+                    f"(best_conf={float(leaf_best_conf):.2f}).\n"
+                )
+                print(json.dumps({"error": "Leaf and trunk not detected. Please try again."}))
+                return
+
             # Use the Specialized Leaf Model
             analysis_result = analyze_leaf_with_model(img, image_url)
+            if isinstance(analysis_result, dict) and analysis_result.get("error"):
+                print(json.dumps(analysis_result))
+                return
             
             # Merge with tree ID
             analysis_result["treeIdentification"] = tree_id_result
@@ -963,8 +1394,11 @@ def main():
             
         else:
             # TRUNK ANALYSIS (Default fallback if not leaf)
-            # Use the Specialized Trunk Model (Trunks.pt)
+            # Use the Specialized Trunk Model (Trunks-v2.pt)
             analysis_result = analyze_trunk_with_model(img, image_url, base_confidence)
+            if isinstance(analysis_result, dict) and analysis_result.get("error"):
+                print(json.dumps(analysis_result))
+                return
             
             # Merge with existing tree ID (though trunk model also predicts it)
             # We trust the initial tree ID for "isRubberTree" but use trunk model for specifics
@@ -973,39 +1407,11 @@ def main():
         print(json.dumps(analysis_result))
 
     elif mode == 'latex':
-        # Latex-only validation tuned to reduce false negatives on valid latex photos.
-        classification = classify_content(img)
-        latex_presence_ratio = estimate_latex_presence_ratio(img)
-
-        # Latex analysis
+        # Latex analysis requires valid spatial detections from Latex-v2.
         try:
-            # We can optionally save a processed image if we add visualization later
-            processed_path = None
-            result = analyze_latex_with_model(img, processed_path)
-
-            model_confidence = float(result.get("qualityClassification", {}).get("confidence", 0) or 0)
-            
-            # Relaxed for user feedback (Latex not detected)
-            strong_tree_signal = (
-                classification['primary_part'] in ['leaf', 'trunk']
-                and classification['confidence'] >= 0.80
-            )
-            strong_non_tree_signal = (
-                classification['primary_part'] == 'unknown'
-                and not classification['is_tree']
-                and classification['confidence'] >= 0.85
-            )
-            weak_latex_signal = latex_presence_ratio < 0.01
-            weak_latex_model = model_confidence < 30
-
-            # Reject only when multiple signals strongly say this is not latex.
-            if (strong_tree_signal or strong_non_tree_signal) and weak_latex_signal and weak_latex_model:
-                sys.stderr.write(
-                    f"❌ [Python ML] Latex mode rejected after model check "
-                    f"(detected='{classification['primary_part']}', conf={classification['confidence']:.2f}, "
-                    f"model_conf={model_confidence:.1f}, latex_ratio={latex_presence_ratio:.3f}).\n"
-                )
-                print(json.dumps({"error": "Detected part non-latex only. Please try again."}))
+            result = analyze_latex_with_model(img, image_url)
+            if isinstance(result, dict) and result.get("error"):
+                print(json.dumps(result))
                 return
 
             print(json.dumps(result))
@@ -1017,382 +1423,653 @@ def main():
 
 def analyze_latex_with_model(img, image_path_for_saving=None):
     """
-    Uses the trained Latex Quality Model (Latex.pt) for analysis.
-    Integrates Groq API for detailed insights.
+    Uses the trained Latex-v2.pt model for latex quality analysis.
+    Requires valid spatial detections (boxes/OBB) and renders labeled overlays.
     """
     model = get_latex_model()
-    
-    # Default values
-    latex_type = "Unknown"
-    confidence = 0.0
-    contamination_level = "low"
-    grade = 'A'
-    drc = 40.0 # Default DRC
-    description = "Standard latex."
-    
-    # Heuristic Fallback logic components
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    avg_color_per_row = np.average(img, axis=0)
-    avg_color = np.average(avg_color_per_row, axis=0)
-    
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
-    contamination_pixels = cv2.countNonZero(thresh)
-    contamination_ratio = contamination_pixels / (img.shape[0] * img.shape[1])
-    
-    if model:
+    if model is None:
+        return analyze_latex_heuristic(img)
+
+    def _env_float(name, default_value):
         try:
-            results = model(img, verbose=False)
-            
-            # Check if Classification or Detection model
-            if hasattr(results[0], 'probs') and results[0].probs is not None:
-                # Classification Model
-                probs = results[0].probs
-                top1_index = probs.top1
-                latex_type = results[0].names[top1_index]
-                confidence = float(probs.top1conf.item()) * 100
-            elif hasattr(results[0], 'boxes') and results[0].boxes is not None:
-                # Detection Model - find the class with highest confidence or most occurrences
-                boxes = results[0].boxes
-                if len(boxes) > 0:
-                    # Get the box with highest confidence
-                    best_box_idx = boxes.conf.argmax()
-                    cls_id = int(boxes.cls[best_box_idx].item())
-                    latex_type = results[0].names[cls_id]
-                    confidence = float(boxes.conf[best_box_idx].item()) * 100
-                else:
-                    latex_type = "Unknown"
-                    confidence = 0.0
-            
-            sys.stderr.write(f"✅ [Python ML] Latex Model Prediction: {latex_type} ({confidence:.1f}%)\n")
-            
-            # --- Combine AI Prediction with Heuristics ---
-            
-            # Use detection box if available to mask the latex area for accurate color
-            latex_mask = None
-            if hasattr(results[0], 'boxes') and results[0].boxes is not None and len(results[0].boxes) > 0:
-                best_box_idx = results[0].boxes.conf.argmax()
-                box = results[0].boxes.xyxy[best_box_idx].cpu().numpy().astype(int)
-                x1, y1, x2, y2 = box
-                
-                # Create mask for color analysis
-                latex_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-                latex_mask[y1:y2, x1:x2] = 255
+            return float(os.environ.get(name, default_value))
+        except Exception:
+            return float(default_value)
+
+    def _env_int(name, default_value):
+        try:
+            return int(os.environ.get(name, default_value))
+        except Exception:
+            return int(default_value)
+
+    def _class_name(names, class_id):
+        cid = int(class_id)
+        if isinstance(names, dict):
+            return str(names.get(cid, cid))
+        if isinstance(names, (list, tuple)) and 0 <= cid < len(names):
+            return str(names[cid])
+        return str(cid)
+
+    def _extract_grade(label):
+        text_label = str(label or '').upper().strip()
+        grade_tokens = ['A', 'B', 'C', 'D', 'E', 'F']
+        for grade_token in grade_tokens:
+            if (
+                f'GRADE-{grade_token}' in text_label
+                or f'GRADE {grade_token}' in text_label
+                or text_label == grade_token
+                or text_label.endswith(f'-{grade_token}')
+            ):
+                return grade_token
+        return None
+
+    def _grade_profile(grade):
+        profiles = {
+            'A': {'grade': 'A', 'drc': 42.0, 'description': 'Premium latex quality detected.', 'contamination': 'low'},
+            'B': {'grade': 'B', 'drc': 38.0, 'description': 'Good latex quality detected.', 'contamination': 'low'},
+            'C': {'grade': 'C', 'drc': 33.0, 'description': 'Fair latex quality detected.', 'contamination': 'medium'},
+            'D': {'grade': 'D', 'drc': 27.0, 'description': 'Low latex quality detected.', 'contamination': 'medium'},
+            'E': {'grade': 'E', 'drc': 20.0, 'description': 'Poor latex quality detected.', 'contamination': 'high'},
+            'F': {'grade': 'F', 'drc': 12.0, 'description': 'Rejected-grade latex detected.', 'contamination': 'high'}
+        }
+        return profiles.get(str(grade or '').upper(), profiles['C'])
+
+    def _grade_color(grade):
+        grade_key = str(grade or '').upper()
+        color_map = {
+            'A': (34, 139, 34),
+            'B': (0, 191, 255),
+            'C': (0, 215, 255),
+            'D': (0, 165, 255),
+            'E': (0, 69, 255),
+            'F': (0, 0, 255)
+        }
+        return color_map.get(grade_key, (255, 255, 255))
+
+    def _build_latex_color_mask(image):
+        hsv_img = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+        lower_white = np.array([0, 0, 80])
+        upper_white = np.array([180, 95, 255])
+        mask_white = cv2.inRange(hsv_img, lower_white, upper_white)
+
+        lower_yellow = np.array([12, 35, 90])
+        upper_yellow = np.array([45, 230, 255])
+        mask_yellow = cv2.inRange(hsv_img, lower_yellow, upper_yellow)
+
+        latex_mask = cv2.bitwise_or(mask_white, mask_yellow)
+        kernel = np.ones((5, 5), np.uint8)
+        latex_mask = cv2.morphologyEx(latex_mask, cv2.MORPH_OPEN, kernel)
+        latex_mask = cv2.morphologyEx(latex_mask, cv2.MORPH_CLOSE, kernel)
+        return latex_mask
+
+    try:
+        min_conf = max(0.05, min(_env_float('LATEX_STRICT_MIN_CONF', 0.30), 0.99))
+        min_area_ratio = max(0.0005, _env_float('LATEX_MIN_AREA_RATIO', 0.002))
+        max_area_ratio = min(0.995, _env_float('LATEX_MAX_AREA_RATIO', 0.98))
+        min_mask_overlap = max(0.02, min(_env_float('LATEX_MIN_MASK_OVERLAP', 0.06), 1.0))
+        max_detections = max(1, _env_int('LATEX_MAX_DETECTIONS', 8))
+
+        latex_color_mask = _build_latex_color_mask(img)
+        img_h, img_w = img.shape[:2]
+        frame_pixels = float(max(img_h * img_w, 1))
+        latex_color_ratio = float(cv2.countNonZero(latex_color_mask)) / frame_pixels
+
+        results = model(img, verbose=False, conf=max(0.10, min_conf * 0.5))
+        if not results:
+            return {"error": "Detected part non-latex only. Please try again."}
+
+        result = results[0]
+        names = result.names if hasattr(result, 'names') else {}
+        candidates = []
+        filtered = []
+
+        def evaluate_detection(det_type, cls_id, conf, geometry):
+            det_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+            det_area = 0.0
+            obb_points = None
+            box_xyxy = None
+
+            if det_type == 'obb':
+                pts = np.array(geometry).reshape((-1, 2)).astype(np.int32)
+                if pts.shape[0] < 3:
+                    return
+                cv2.fillPoly(det_mask, [pts], 255)
+                det_area = float(abs(cv2.contourArea(pts)))
+                obb_points = pts
             else:
-                # Fallback: Use HSV segmentation to find latex-colored regions (White/Yellowish)
-                # This ignores dark bark/background
-                hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-                
-                # Define range for white/cream/yellowish latex
-                # Hue: 0-180 (OpenCV), allow yellowish (20-40) and neutral/white
-                # Saturation: Low for white (0-60), higher for yellow (up to 150)
-                # Value: High brightness (>100)
-                
-                # White/Light Grey Mask
-                lower_white = np.array([0, 0, 100])
-                upper_white = np.array([180, 60, 255])
-                mask_white = cv2.inRange(hsv_img, lower_white, upper_white)
-                
-                # Yellowish Mask (for oxidized latex)
-                lower_yellow = np.array([15, 60, 100])
-                upper_yellow = np.array([40, 200, 255])
-                mask_yellow = cv2.inRange(hsv_img, lower_yellow, upper_yellow)
-                
-                # Combine masks
-                latex_mask = cv2.bitwise_or(mask_white, mask_yellow)
-                
-                # Clean up mask (morphology)
-                kernel = np.ones((5,5), np.uint8)
-                latex_mask = cv2.morphologyEx(latex_mask, cv2.MORPH_OPEN, kernel)
-                latex_mask = cv2.morphologyEx(latex_mask, cv2.MORPH_CLOSE, kernel)
-                
-                # If mask is empty (e.g., lighting issues), fallback to center crop
-                if cv2.countNonZero(latex_mask) < (img.shape[0] * img.shape[1] * 0.05): # Less than 5% latex found
-                    sys.stderr.write("⚠️ [Python ML] Latex segmentation failed, falling back to center crop.\n")
-                    h, w = img.shape[:2]
-                    center_h, center_w = h // 2, w // 2
-                    crop_h, crop_w = h // 3, w // 3
-                    latex_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-                    latex_mask[center_h-crop_h//2:center_h+crop_h//2, center_w-crop_w//2:center_w+crop_w//2] = 255
+                coords = [int(v) for v in np.array(geometry).flatten().tolist()]
+                if len(coords) != 4:
+                    return
+                x1, y1, x2, y2 = coords
+                x1 = max(0, min(img_w - 1, x1))
+                y1 = max(0, min(img_h - 1, y1))
+                x2 = max(0, min(img_w - 1, x2))
+                y2 = max(0, min(img_h - 1, y2))
+                if x2 <= x1 or y2 <= y1:
+                    return
+                cv2.rectangle(det_mask, (x1, y1), (x2, y2), 255, thickness=cv2.FILLED)
+                det_area = float((x2 - x1) * (y2 - y1))
+                box_xyxy = [x1, y1, x2, y2]
 
-            # Calculate average color ONLY within the mask
-            avg_color = cv2.mean(img, mask=latex_mask)[:3]
-            
-            # Re-calculate contamination ratio within the MASKED area only
-            # Invert mask to find dark spots inside the latex area
-            # We want pixels that are INSIDE latex_mask but are DARK (contamination)
-            gray_masked = cv2.bitwise_and(gray, gray, mask=latex_mask)
-            _, contamination_thresh = cv2.threshold(gray_masked, 90, 255, cv2.THRESH_BINARY)
-            # Dark pixels will be 0, bright will be 255. 
-            # But outside mask is 0 too. So we need to distinguish background (0) from contamination (0).
-            # Easier: Find pixels where (latex_mask > 0) AND (gray < 90)
-            
-            latex_pixels_count = cv2.countNonZero(latex_mask)
-            if latex_pixels_count > 0:
-                # Contamination = pixels inside mask that are dark
-                contamination_mask = cv2.inRange(gray_masked, 1, 90) # 1 to exclude background 0
-                contamination_pixels = cv2.countNonZero(contamination_mask)
-                contamination_ratio = contamination_pixels / latex_pixels_count
-            else:
-                contamination_ratio = 0.0
+            det_pixels = float(cv2.countNonZero(det_mask))
+            if det_pixels <= 0:
+                return
 
-            # Adjust Grade/DRC based on Model Class
-            primary_color_class = "Unknown"
-            
-            # Normalize type string for robust matching against Latex.pt classes
-            # Expected classes: "latex with water", "yellow latex", "white latex"
-            lt_lower = latex_type.lower()
-            
-            # Default values
-            grade = 'B'
-            drc = 35.0
-            contamination_level = "low"
-            description = f"Detected: {latex_type}"
-            
-            if "white" in lt_lower:
-                # "white latex" -> High Quality
-                grade = 'A'
-                drc = 40.0
-                description = "High quality fresh white latex."
-                primary_color_class = "White Latex"
-                contamination_level = "low"
-                
-            elif "yellow" in lt_lower:
-                # "yellow latex" -> Oxidized / Pre-coagulated
-                grade = 'C'
-                drc = 32.0
-                description = "Yellowish/Oxidized latex detected."
-                primary_color_class = "Yellow/Oxidized"
-                contamination_level = "medium" # Oxidation is a form of contamination/degradation
-                
-            elif "water" in lt_lower:
-                # "latex with water" -> Diluted / Rain Contamination
-                grade = 'D'
-                drc = 15.0
-                description = "Diluted or contaminated with water."
-                primary_color_class = "Water/Diluted"
-                contamination_level = "high"
-                
-            elif "lump" in lt_lower or "cup" in lt_lower:
-                 grade = 'B'
-                 drc = 55.0 
-                 description = "Cup lump detected."
-                 primary_color_class = "Cup Lump"
-            else:
-                # Fallback for unknown classes
-                grade = 'B'
-                drc = 35.0
-                description = f"Detected: {latex_type}"
-                primary_color_class = latex_type.title()
+            area_ratio = det_area / frame_pixels
+            overlap_pixels = float(cv2.countNonZero(cv2.bitwise_and(det_mask, latex_color_mask)))
+            overlap_ratio = overlap_pixels / det_pixels if det_pixels > 0 else 0.0
 
-            # Refine contamination level based on visual analysis (pixels)
-            # Only downgrade if visual analysis CONFIRMS physical debris, or if Model says "water"
-            if "water" in lt_lower:
-                 contamination_level = "high"
-            elif contamination_ratio > 0.05:
-                # Physical debris detected
-                if grade < 'D': grade = chr(ord(grade) + 1) 
-                drc -= 2 
-                if contamination_level != "high": contamination_level = "medium"
-                description += " Debris detected."
-            
-            drc = max(5.0, drc) # Min floor
-
-            # --- AI Insights (Groq) ---
-            sys.stderr.write(f"🧠 [Python ML] Requesting detailed latex analysis from Groq...\n")
-            ai_insights = get_groq_latex_analysis(latex_type, confidence, contamination_level, drc)
-            
-            ai_recommendation = build_latex_ai_recommendation(ai_insights, grade, description)
-            quality_assessment = ai_recommendation["quality_assessment"]
-            processing_advice = ai_recommendation["processing_advice"]
-            preservation_tips = ai_recommendation["preservation_tips"]
-            market_value_insight = ai_recommendation["market_value_insight"]
-            recommended_product = ai_recommendation["recommended_product"]
-            recommended_uses = ai_recommendation["recommended_uses"]
-            
-            if not recommended_uses and recommended_product != "AI recommendation unavailable":
-                recommended_uses = [recommended_product]
-            
-            # --- Construct Result ---
-            # Re-convert BGR to RGB for output
-            r_val = int(avg_color[2])
-            g_val = int(avg_color[1])
-            b_val = int(avg_color[0])
-            
-            return {
-                "colorAnalysis": {
-                    "primaryColor": primary_color_class, 
-                    "rgb": { "r": r_val, "g": g_val, "b": b_val },
-                    "hex": "#{:02x}{:02x}{:02x}".format(r_val, g_val, b_val)
-                },
-                "qualityClassification": {
-                    "grade": grade,
-                    "description": quality_assessment, # Use AI detailed assessment
-                    "confidence": confidence
-                },
-                "productYieldEstimation": {
-                    "dryRubberContent": drc,
-                    "productType": recommended_product
-                },
-                "quantityEstimation": {
-                    "volume": 0 # Needs user input or depth estimation
-                },
-                "contaminationDetection": {
-                    "hasContamination": contamination_ratio > 0.01,
-                    "contaminationLevel": contamination_level,
-                    "contaminantTypes": ["Water"] if contamination_level == "high" else (["Debris"] if contamination_ratio > 0.02 else []),
-                    "details": ai_recommendation["contamination_handling"]
-                },
-                "productRecommendation": {
-                    "recommendedProduct": recommended_product,
-                    "reason": processing_advice,
-                    "expectedQuality": f"Grade {grade}",
-                    "recommendedUses": recommended_uses[:8],
-                    "marketValueInsight": market_value_insight,
-                    "preservation": preservation_tips
-                },
-                "marketAnalysis": ai_recommendation["market_analysis"],
-                "aiInsights": { # New standardized field
-                    "promptRecommendations": [
-                        f"How to improve {latex_type} quality?",
-                        f"Best products to make from Grade {grade} latex",
-                        "How to increase latex market value",
-                        "Current rubber market prices"
-                    ],
-                    "suggestions": [processing_advice, preservation_tips, market_value_insight] + recommended_uses[:3]
-                }
+            entry = {
+                'det_type': det_type,
+                'class_id': int(cls_id),
+                'class_name': _class_name(names, cls_id).strip(),
+                'conf': float(conf),
+                'area_ratio': float(area_ratio),
+                'overlap_ratio': float(overlap_ratio),
+                'obb': obb_points,
+                'box': box_xyxy
             }
-        except Exception as e:
-            sys.stderr.write(f"❌ [Python ML] Model inference error: {e}\n")
-            # Fallback to heuristic
-            return analyze_latex_heuristic(img)
-    
-    # Fallback if no model
-    return analyze_latex_heuristic(img)
+            candidates.append(entry)
 
+            required_conf = min_conf
+            if area_ratio > 0.90:
+                required_conf = max(required_conf, 0.60)
+            elif area_ratio < 0.01:
+                required_conf = max(required_conf, 0.45)
 
+            area_ok = min_area_ratio <= area_ratio <= max_area_ratio
+            overlap_ok = overlap_ratio >= min_mask_overlap
+            high_conf_override = float(conf) >= 0.80 and 0.01 <= area_ratio <= 0.80
+
+            if area_ok and float(conf) >= required_conf and (overlap_ok or high_conf_override):
+                filtered.append(entry)
+
+        if hasattr(result, 'obb') and result.obb is not None and len(result.obb) > 0:
+            for idx in range(len(result.obb)):
+                evaluate_detection(
+                    'obb',
+                    int(result.obb.cls[idx].item()),
+                    float(result.obb.conf[idx].item()),
+                    result.obb.xyxyxyxy[idx].cpu().numpy().astype(int)
+                )
+
+        if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
+            for idx in range(len(result.boxes)):
+                evaluate_detection(
+                    'box',
+                    int(result.boxes.cls[idx].item()),
+                    float(result.boxes.conf[idx].item()),
+                    result.boxes.xyxy[idx].cpu().numpy().astype(int)
+                )
+
+        if not filtered and not candidates:
+            low_conf_results = model(img, verbose=False, conf=0.03)
+            if low_conf_results:
+                low_result = low_conf_results[0]
+
+                if hasattr(low_result, 'obb') and low_result.obb is not None and len(low_result.obb) > 0:
+                    for idx in range(len(low_result.obb)):
+                        evaluate_detection(
+                            'obb',
+                            int(low_result.obb.cls[idx].item()),
+                            float(low_result.obb.conf[idx].item()),
+                            low_result.obb.xyxyxyxy[idx].cpu().numpy().astype(int)
+                        )
+
+                if hasattr(low_result, 'boxes') and low_result.boxes is not None and len(low_result.boxes) > 0:
+                    for idx in range(len(low_result.boxes)):
+                        evaluate_detection(
+                            'box',
+                            int(low_result.boxes.cls[idx].item()),
+                            float(low_result.boxes.conf[idx].item()),
+                            low_result.boxes.xyxy[idx].cpu().numpy().astype(int)
+                        )
+
+        best_candidate_conf = max([float(item.get('conf') or 0.0) for item in candidates], default=0.0) * 100.0
+        if not filtered:
+            sys.stderr.write(
+                f"[Python ML] Latex-v2 rejected: no valid spatial detections "
+                f"(candidates={len(candidates)}, best_conf={best_candidate_conf:.1f}%, "
+                f"latex_color_ratio={latex_color_ratio:.3f}).\n"
+            )
+            return {"error": "Detected part non-latex only. Please try again."}
+
+        filtered.sort(key=lambda item: float(item.get('conf') or 0.0), reverse=True)
+        detections = filtered[:max_detections]
+        primary = detections[0]
+
+        latex_type = str(primary.get('class_name') or 'Unknown').strip() or 'Unknown'
+        confidence = float(primary.get('conf') or 0.0) * 100.0
+
+        detected_grade = _extract_grade(latex_type)
+        profile = _grade_profile(detected_grade)
+        grade = profile['grade']
+        drc = float(profile['drc'])
+        description = str(profile['description'])
+        contamination_level = str(profile['contamination'])
+
+        analysis_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+        for det in detections:
+            if det.get('det_type') == 'obb' and det.get('obb') is not None:
+                pts = np.array(det['obb']).astype(np.int32)
+                cv2.fillPoly(analysis_mask, [pts], 255)
+            elif det.get('det_type') == 'box' and det.get('box') is not None:
+                x1, y1, x2, y2 = [int(v) for v in det['box']]
+                cv2.rectangle(analysis_mask, (x1, y1), (x2, y2), 255, thickness=cv2.FILLED)
+
+        if cv2.countNonZero(analysis_mask) <= 0 and cv2.countNonZero(latex_color_mask) > 0:
+            analysis_mask = latex_color_mask.copy()
+
+        if cv2.countNonZero(analysis_mask) <= 0:
+            return {"error": "Detected part non-latex only. Please try again."}
+
+        avg_color = cv2.mean(img, mask=analysis_mask)[:3]
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray_masked = cv2.bitwise_and(gray, gray, mask=analysis_mask)
+        latex_pixels_count = float(cv2.countNonZero(analysis_mask))
+        contamination_ratio = 0.0
+        if latex_pixels_count > 0:
+            contamination_mask = cv2.inRange(gray_masked, 1, 90)
+            contamination_pixels = float(cv2.countNonZero(contamination_mask))
+            contamination_ratio = contamination_pixels / latex_pixels_count
+
+        if contamination_ratio > 0.12:
+            contamination_level = 'high'
+            drc -= 5.0
+            description += ' Severe contamination detected.'
+        elif contamination_ratio > 0.05:
+            if contamination_level != 'high':
+                contamination_level = 'medium'
+            drc -= 3.0
+            description += ' Moderate contamination detected.'
+        elif contamination_ratio > 0.02:
+            if contamination_level not in ('medium', 'high'):
+                contamination_level = 'low'
+            drc -= 1.5
+            description += ' Minor contamination detected.'
+
+        drc = max(5.0, drc)
+
+        mask_points = cv2.findNonZero(analysis_mask)
+        if mask_points is not None:
+            x, y, w, h = cv2.boundingRect(mask_points)
+            color_roi = img[y:y+h, x:x+w]
+            primary_color_class = get_dominant_color_name(color_roi) if color_roi.size > 0 else 'Unknown'
+        else:
+            primary_color_class = 'Unknown'
+
+        sys.stderr.write(
+            f"[Python ML] Latex-v2 detections: {len(detections)}. "
+            f"Primary: {latex_type} ({confidence:.1f}%).\n"
+        )
+
+        sys.stderr.write('[Python ML] Requesting detailed latex analysis from Groq...\n')
+        ai_insights = get_groq_latex_analysis(latex_type, confidence, contamination_level, drc)
+        ai_recommendation = build_latex_ai_recommendation(ai_insights, grade, description)
+
+        quality_assessment = ai_recommendation['quality_assessment']
+        processing_advice = ai_recommendation['processing_advice']
+        preservation_tips = ai_recommendation['preservation_tips']
+        market_value_insight = ai_recommendation['market_value_insight']
+        recommended_product = ai_recommendation['recommended_product']
+        recommended_uses = ai_recommendation['recommended_uses']
+
+        if not recommended_uses and recommended_product != 'AI recommendation unavailable':
+            recommended_uses = [recommended_product]
+
+        vis_img = img.copy()
+        for det in detections:
+            det_name = str(det.get('class_name') or 'Unknown').strip()
+            det_conf = float(det.get('conf') or 0.0) * 100.0
+            det_grade = _extract_grade(det_name) or grade
+            det_color = _grade_color(det_grade)
+            label_text = f"{det_name} ({det_conf:.1f}%)"
+            label_anchor = (10, 28)
+
+            if det.get('det_type') == 'obb' and det.get('obb') is not None:
+                points = np.array(det['obb']).astype(int)
+                pts = points.reshape((-1, 1, 2))
+                cv2.polylines(vis_img, [pts], True, det_color, 3)
+                min_xy = np.min(points, axis=0)
+                label_anchor = (int(max(min_xy[0], 10)), int(max(min_xy[1] - 10, 24)))
+            elif det.get('det_type') == 'box' and det.get('box') is not None:
+                x1, y1, x2, y2 = [int(v) for v in det['box']]
+                cv2.rectangle(vis_img, (x1, y1), (x2, y2), det_color, 3)
+                label_anchor = (max(x1, 10), max(y1 - 10, 24))
+            else:
+                img_h_vis, img_w_vis = vis_img.shape[:2]
+                cv2.rectangle(vis_img, (6, 6), (max(img_w_vis - 6, 6), max(img_h_vis - 6, 6)), det_color, 2)
+
+            cv2.putText(
+                vis_img,
+                label_text,
+                label_anchor,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                det_color,
+                2
+            )
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        temp_dir = os.path.join(script_dir, 'temp_output')
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+
+        timestamp = int(time.time())
+        base_name = os.path.basename(str(image_path_for_saving or 'latex.jpg'))
+        if 'http' in base_name.lower():
+            base_name = 'latex.jpg'
+
+        processed_filename = f"processed_{timestamp}_{base_name}"
+        processed_image_path = os.path.join(temp_dir, processed_filename)
+        cv2.imwrite(processed_image_path, vis_img)
+
+        r_val = int(avg_color[2])
+        g_val = int(avg_color[1])
+        b_val = int(avg_color[0])
+        ai_prompt_recommendations = ai_recommendation.get('prompt_recommendations') or []
+        ai_suggestions = ai_recommendation.get('suggestions') or []
+
+        return {
+            'colorAnalysis': {
+                'primaryColor': primary_color_class,
+                'hex': "#{:02x}{:02x}{:02x}".format(r_val, g_val, b_val)
+            },
+            'qualityClassification': {
+                'grade': grade,
+                'description': quality_assessment,
+                'confidence': confidence
+            },
+            'productYieldEstimation': {
+                'dryRubberContent': drc,
+                'estimatedYield': 0.0,
+                'productType': recommended_product
+            },
+            'quantityEstimation': {
+                'volume': 0
+            },
+            'contaminationDetection': {
+                'hasContamination': contamination_ratio > 0.01,
+                'contaminationLevel': contamination_level,
+                'contaminantTypes': ['Debris'] if contamination_ratio > 0.01 else [],
+                'details': ai_recommendation['contamination_handling']
+            },
+            'productRecommendation': {
+                'recommendedProduct': recommended_product,
+                'reason': processing_advice,
+                'expectedQuality': f'Grade {grade}',
+                'recommendedUses': recommended_uses[:8],
+                'marketValueInsight': market_value_insight,
+                'preservation': preservation_tips
+            },
+            'marketAnalysis': ai_recommendation['market_analysis'],
+            'aiInsights': {
+                'promptRecommendations': ai_prompt_recommendations,
+                'suggestions': ai_suggestions
+            },
+            'processed_image_path': processed_image_path
+        }
+
+    except Exception as e:
+        sys.stderr.write(f'[Python ML] Model inference error: {e}\n')
+        return analyze_latex_heuristic(img)
 
 def analyze_trunk_with_model(img, image_path_for_saving=None, base_confidence=0.0):
     """
-    Uses the trained Trunks.pt model for disease detection and analysis.
+    Uses the trained Trunks-v2.pt model for trunk disease analysis.
+    Returns all detections (not top-1 only) and renders full box/OBB overlays with labels.
     """
     model = get_trunk_model()
-    
-    # Default values
-    disease_name = "Healthy"
-    confidence = base_confidence # Use base classification confidence as default
-    severity = "none"
-    recommendation = "Maintain regular monitoring."
     processed_image_path = None
-    
+
     if model:
         try:
-            results = model(img, verbose=False)
-            
-            # Check for detections (OBB or Standard Box)
-            if hasattr(results[0], 'obb') and results[0].obb is not None and len(results[0].obb) > 0:
-                # OBB Detection
-                best_idx = results[0].obb.conf.argmax()
-                cls_id = int(results[0].obb.cls[best_idx].item())
-                disease_name = results[0].names[cls_id]
-                confidence = float(results[0].obb.conf[best_idx].item()) * 100
-            elif hasattr(results[0], 'boxes') and results[0].boxes is not None and len(results[0].boxes) > 0:
-                # Standard Box Detection
-                best_idx = results[0].boxes.conf.argmax()
-                cls_id = int(results[0].boxes.cls[best_idx].item())
-                disease_name = results[0].names[cls_id]
-                confidence = float(results[0].boxes.conf[best_idx].item()) * 100
-            elif hasattr(results[0], 'probs') and results[0].probs is not None:
-                # Classification Fallback
-                probs = results[0].probs
-                top1_index = probs.top1
-                disease_name = results[0].names[top1_index]
-                confidence = float(probs.top1conf.item()) * 100
-            
-            # Ensure confidence is not zero if we default to healthy but have a base confidence
-            if confidence == 0.0 and base_confidence > 0:
-                 confidence = base_confidence
+            results = model(img, verbose=False, conf=0.15)
+            result = results[0]
 
-            # Keep the raw class label from Trunks model for disease display.
-            classified_name = str(disease_name).strip()
+            def has_spatial_detections(prediction):
+                has_obb = hasattr(prediction, 'obb') and prediction.obb is not None and len(prediction.obb) > 0
+                has_box = hasattr(prediction, 'boxes') and prediction.boxes is not None and len(prediction.boxes) > 0
+                return has_obb or has_box
 
-            # Map classification to severity/recommendation.
-            mapped_name, severity, recommendation = map_trunk_disease(classified_name)
+            # Second pass with lower confidence to avoid missing valid trunk detections.
+            if not has_spatial_detections(result):
+                low_conf_results = model(img, verbose=False, conf=0.03)
+                if low_conf_results and has_spatial_detections(low_conf_results[0]):
+                    result = low_conf_results[0]
+            names = result.names if hasattr(result, 'names') else {}
 
-            # For diseased trunks, show the actual class label from model.
-            # For healthy classes, show the mapped healthy label.
-            if severity == "none":
-                disease_name = mapped_name
-            else:
-                disease_name = classified_name or mapped_name
-            
-            sys.stderr.write(f"✅ [Python ML] Trunk Model Prediction: {disease_name} ({confidence:.1f}%)\n")
-            
-            # Get Groq Analysis
-            sys.stderr.write(f"🧠 [Python ML] Requesting detailed trunk analysis from Groq...\n")
-            
-            # --- Physical Properties (Real Analysis) ---
-            # Pass bounding box if available for better girth estimation
+            def get_class_name(class_id):
+                cid = int(class_id)
+                if isinstance(names, dict):
+                    return str(names.get(cid, cid))
+                if isinstance(names, (list, tuple)) and 0 <= cid < len(names):
+                    return str(names[cid])
+                return str(cid)
+
+            def severity_to_color(level):
+                sev = str(level or "").lower()
+                if sev == "none":
+                    return (0, 200, 0)
+                if sev in ("critical", "high"):
+                    return (0, 0, 255)
+                if sev == "moderate":
+                    return (0, 165, 255)
+                if sev == "low":
+                    return (0, 255, 255)
+                return (255, 80, 0)
+
+            trunk_mask = get_trunk_mask(img)
+            filtered_detections, candidate_detections, trunk_thresholds = _extract_filtered_trunk_detections(
+                result,
+                img,
+                trunk_mask,
+                min_conf=0.22
+            )
+
+            if candidate_detections and len(filtered_detections) < len(candidate_detections):
+                sys.stderr.write(
+                    f"[Python ML] Trunk filter kept {len(filtered_detections)}/{len(candidate_detections)} "
+                    f"(min_conf={trunk_thresholds['min_conf']:.2f}, min_overlap={trunk_thresholds['min_mask_overlap']:.2f}, "
+                    f"area={trunk_thresholds['min_area_ratio']:.3f}-{trunk_thresholds['max_area_ratio']:.3f}).\n"
+                )
+
+            detections = []
+            for det in filtered_detections:
+                raw_name = str(det.get("class_name") or get_class_name(det.get("class_id"))).strip()
+                conf = float(det.get("conf") or 0.0) * 100.0
+                mapped_name, mapped_severity, mapped_recommendation = map_trunk_disease(raw_name)
+                display_name = mapped_name if mapped_severity == "none" else (raw_name or mapped_name)
+                detections.append({
+                    "name": display_name,
+                    "confidence": conf,
+                    "severity": mapped_severity,
+                    "recommendation": mapped_recommendation,
+                    "ai_diagnosis": None,
+                    "det_type": det.get("det_type"),
+                    "obb": det.get("obb"),
+                    "box": det.get("box")
+                })
+
+            if not detections:
+                best_candidate_conf = max([float(item.get("conf") or 0.0) for item in candidate_detections], default=0.0) * 100.0
+                sys.stderr.write(
+                    f"[Python ML] Trunk-v2 rejected: no valid spatial detections "
+                    f"(candidates={len(candidate_detections)}, best_conf={best_candidate_conf:.1f}%).\n"
+                )
+                return {"error": "Detected part non-trunk only. Please try again."}
+
+            # Sort by confidence, then prioritize diseased entries as primary when available.
+            detections.sort(key=lambda item: float(item.get("confidence", 0) or 0), reverse=True)
+            primary_index = next(
+                (
+                    idx for idx, item in enumerate(detections)
+                    if str(item.get("severity") or "").lower() != "none"
+                ),
+                0
+            )
+            if primary_index > 0:
+                detections = [detections[primary_index]] + detections[:primary_index] + detections[primary_index + 1:]
+            primary_detection = detections[0]
+
+            sys.stderr.write(
+                f"[Python ML] Trunk detections: {len(detections)}. Primary: "
+                f"{primary_detection['name']} ({float(primary_detection['confidence']):.1f}%)\n"
+            )
+
+            # Use the primary detection geometry for physical trunk analysis.
             bbox = None
-            if hasattr(results[0], 'obb') and results[0].obb is not None and len(results[0].obb) > 0:
-                 best_idx = results[0].obb.conf.argmax()
-                 bbox = results[0].obb.xyxyxyxy[best_idx].cpu().numpy().astype(int) # 4 points
-            elif hasattr(results[0], 'boxes') and results[0].boxes is not None and len(results[0].boxes) > 0:
-                 best_idx = results[0].boxes.conf.argmax()
-                 bbox = results[0].boxes.xyxy[best_idx].cpu().numpy().astype(int) # [x1, y1, x2, y2]
-            
+            if primary_detection.get("det_type") == "obb" and primary_detection.get("obb") is not None:
+                bbox = primary_detection["obb"]
+            elif primary_detection.get("det_type") == "box" and primary_detection.get("box") is not None:
+                bbox = primary_detection["box"]
+
             trunk_phys = analyze_trunk_physical(img, bbox)
-            
-            # We can reuse the leaf analysis prompt structure or create a new one. 
-            # For simplicity, we reuse get_groq_analysis but contextually it works for diseases.
-            ai_insights = get_groq_analysis(disease_name, confidence, 0, trunk_phys["color"]) # Use real color
-            
-            if ai_insights and text_says_healthy(ai_insights.get("diagnosis")):
-                 severity = "none"
-                 disease_name = "No disease detected"
-                 recommendation = "Tree trunk appears healthy. Continue routine care."
+
+            # Request a deeper recommendation for the primary detection.
+            sys.stderr.write("[Python ML] Requesting detailed trunk analysis from Groq...\n")
+            ai_insights = get_groq_analysis(
+                primary_detection["name"],
+                float(primary_detection.get("confidence", 0) or 0),
+                0,
+                trunk_phys["color"]
+            )
+
+            all_detections_healthy = all(str(det.get("severity") or "").lower() == "none" for det in detections)
+            if ai_insights and text_says_healthy(ai_insights.get("diagnosis")) and all_detections_healthy:
+                primary_detection["severity"] = "none"
+                primary_detection["name"] = "No disease detected"
+                primary_detection["recommendation"] = "Tree trunk appears healthy. Continue routine care."
             elif ai_insights:
-                 recommendation = ai_insights.get("treatment", recommendation)
-                 if isinstance(recommendation, list): recommendation = "; ".join(recommendation)
-                 elif isinstance(recommendation, dict): recommendation = str(recommendation)
-            
+                ai_recommendation = ai_insights.get("treatment", primary_detection.get("recommendation", ""))
+                if isinstance(ai_recommendation, list):
+                    ai_recommendation = "; ".join(ai_recommendation)
+                elif isinstance(ai_recommendation, dict):
+                    ai_recommendation = str(ai_recommendation)
+                else:
+                    ai_recommendation = str(ai_recommendation or "")
+
+                if ai_recommendation.strip():
+                    primary_detection["recommendation"] = ai_recommendation
+
+            primary_ai_diagnosis = (
+                ai_insights.get("diagnosis", "No detailed diagnosis available.")
+                if ai_insights else None
+            )
+
+            # Normalize detections for API response.
+            normalized_detections = []
+            for idx, det in enumerate(detections):
+                normalized_detections.append({
+                    "name": str(det.get("name") or "Unknown").strip(),
+                    "confidence": float(det.get("confidence") or 0),
+                    "severity": str(det.get("severity") or "unknown").strip().lower(),
+                    "recommendation": (
+                        primary_detection.get("recommendation", "")
+                        if idx == 0 else str(det.get("recommendation") or "").strip()
+                    ),
+                    "ai_diagnosis": primary_ai_diagnosis if idx == 0 else None
+                })
+
+            has_diseased_detection = any(
+                str(det.get("severity") or "").lower() != "none"
+                for det in normalized_detections
+            )
+
+            # Draw all detections (OBB/Box) with class + confidence labels.
+            vis_img = img.copy()
+            fallback_label_y = 28
+            for det in detections:
+                det_name = str(det.get("name") or "Unknown").strip()
+                det_conf = float(det.get("confidence") or 0)
+                det_color = severity_to_color(det.get("severity"))
+                label_text = f"{det_name} ({det_conf:.1f}%)"
+                label_anchor = (10, 28)
+
+                if det.get("det_type") == "obb" and det.get("obb") is not None:
+                    obb_points = np.array(det["obb"]).astype(int)
+                    pts = obb_points.reshape((-1, 1, 2))
+                    cv2.polylines(vis_img, [pts], True, det_color, 3)
+                    min_xy = np.min(obb_points, axis=0)
+                    label_anchor = (int(max(min_xy[0], 10)), int(max(min_xy[1] - 10, 24)))
+                elif det.get("det_type") == "box" and det.get("box") is not None:
+                    x1, y1, x2, y2 = [int(v) for v in np.array(det["box"]).flatten().tolist()]
+                    cv2.rectangle(vis_img, (x1, y1), (x2, y2), det_color, 3)
+                    label_anchor = (max(x1, 10), max(y1 - 10, 24))
+                else:
+                    continue
+
+                cv2.putText(
+                    vis_img,
+                    label_text,
+                    label_anchor,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    det_color,
+                    2
+                )
+
+            # Save processed trunk image.
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            temp_dir = os.path.join(script_dir, 'temp_output')
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+
+            timestamp = int(time.time())
+            base_name = os.path.basename(str(image_path_for_saving or 'trunk.jpg'))
+            processed_filename = f"processed_{timestamp}_{base_name}"
+            if 'http' in processed_filename.lower():
+                processed_filename = f"processed_{timestamp}_trunk.jpg"
+
+            processed_image_path = os.path.join(temp_dir, processed_filename)
+            cv2.imwrite(processed_image_path, vis_img)
+
+            diseased_names = [
+                d["name"] for d in normalized_detections
+                if str(d.get("severity") or "").lower() != "none"
+            ]
+            unique_diseased_names = list(dict.fromkeys(diseased_names))
+            primary_name = normalized_detections[0]["name"]
+            primary_severity = normalized_detections[0]["severity"]
+
             return {
                 "treeIdentification": {
                     "isRubberTree": True,
-                    "confidence": confidence,
+                    "confidence": float(normalized_detections[0]["confidence"]),
                     "detectedPart": "trunk",
                     "maturity": "mature"
                 },
                 "trunkAnalysis": {
                     "texture": trunk_phys["texture"],
                     "color": trunk_phys["color"],
-                    "healthStatus": "healthy" if severity == "none" else "diseased",
-                    "damages": [disease_name] if severity != "none" else []
+                    "healthStatus": "diseased" if has_diseased_detection else "healthy",
+                    "damages": unique_diseased_names
                 },
                 "leafAnalysis": None,
-                "diseaseDetection": [{
-                     "name": disease_name, 
-                     "confidence": confidence, 
-                     "severity": severity, 
-                     "recommendation": recommendation,
-                     "ai_diagnosis": ai_insights.get("diagnosis", "No detailed diagnosis available.") if ai_insights else None
-                }],
+                "diseaseDetection": normalized_detections,
                 "tappabilityAssessment": {
-                    "isTappable": severity == "none" and trunk_phys['girth'] > 45,
-                    "score": 85 if severity == "none" else 30,
-                    "reason": "Tree is healthy." if severity == "none" else f"Untappable due to {disease_name}."
+                    "isTappable": (not has_diseased_detection) and trunk_phys['girth'] > 45,
+                    "score": 85 if not has_diseased_detection else 30,
+                    "reason": (
+                        "Tree is healthy."
+                        if not has_diseased_detection
+                        else f"Untappable due to {primary_name}."
+                    )
                 },
-                "productivityRecommendation": { # Add this
-                    "status": "optimal" if severity == "none" else "critical",
-                    "suggestions": [recommendation]
-                }
+                "productivityRecommendation": {
+                    "status": "optimal" if primary_severity == "none" else "critical",
+                    "suggestions": [normalized_detections[0]["recommendation"]]
+                },
+                "processed_image_path": processed_image_path
             }
 
         except Exception as e:
-            sys.stderr.write(f"❌ [Python ML] Trunk model inference failed: {e}\n")
-            return analyze_trunk_heuristic_wrapper(img)
-            
-    return analyze_trunk_heuristic_wrapper(img)
+            sys.stderr.write(f"[Python ML] Trunk model inference failed: {e}\n")
+            return {"error": "Trunk analysis failed. Please try again."}
+
+    return {"error": "Trunk model unavailable. Please try again."}
 
 def analyze_trunk_heuristic_wrapper(img):
     # Wrapper to format heuristic output to match full analysis structure
@@ -1552,7 +2229,6 @@ def analyze_latex_heuristic(img):
     return {
         "colorAnalysis": {
             "primaryColor": "white",
-            "rgb": { "r": r_val, "g": g_val, "b": b_val },
             "hex": "#{:02x}{:02x}{:02x}".format(r_val, g_val, b_val)
         },
         "qualityClassification": {
@@ -1562,6 +2238,7 @@ def analyze_latex_heuristic(img):
         },
         "productYieldEstimation": {
              "dryRubberContent": drc,
+             "estimatedYield": 0.0,
              "productType": ai_recommendation["recommended_product"]
         },
         "productRecommendation": {
@@ -1586,20 +2263,12 @@ def analyze_latex_heuristic(img):
         },
         "marketAnalysis": ai_recommendation["market_analysis"],
         "aiInsights": {
-            "promptRecommendations": [
-                "How can I improve this latex grade?",
-                f"Best products for Grade {grade} latex",
-                "How to increase market value before selling",
-                "How to preserve latex before processing"
-            ],
-            "suggestions": [
-                ai_recommendation["processing_advice"],
-                ai_recommendation["preservation_tips"],
-                ai_recommendation["market_value_insight"]
-            ] + ai_recommendation["recommended_uses"][:3]
+            "promptRecommendations": ai_recommendation.get("prompt_recommendations") or [],
+            "suggestions": ai_recommendation.get("suggestions") or []
         }
     }
 
 if __name__ == "__main__":
     # print("DEBUG: MAIN CALLED")
     main()
+

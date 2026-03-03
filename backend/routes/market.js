@@ -1,318 +1,867 @@
 const express = require('express');
-const router = express.Router();
 const axios = require('axios');
 const MarketData = require('../models/MarketData');
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const MARKET_CACHE_HOURS = Number(process.env.MARKET_CACHE_HOURS || 24);
+const router = express.Router();
+
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const GROQ_MODEL = process.env.MARKET_GROQ_MODEL || 'llama-3.1-8b-instant';
 const GROQ_TIMEOUT_MS = Number(process.env.MARKET_GROQ_TIMEOUT_MS || 12000);
+
+const MARKET_CACHE_MINUTES = (() => {
+  const cacheMinutes = Number(process.env.MARKET_CACHE_MINUTES);
+  if (Number.isFinite(cacheMinutes) && cacheMinutes > 0) {
+    return cacheMinutes;
+  }
+
+  const cacheHours = Number(process.env.MARKET_CACHE_HOURS);
+  if (Number.isFinite(cacheHours) && cacheHours > 0) {
+    return cacheHours * 60;
+  }
+
+  return 20;
+})();
+const MARKET_HISTORY_DAYS = Number(process.env.MARKET_HISTORY_DAYS || 400);
+
+const SOURCE_SYMBOLS = String(process.env.MARKET_SOURCE_SYMBOLS || '0DV.F')
+  .split(',')
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
+
+const SOURCE_META = {
+  // SHFE rubber quote is typically CNY per ton.
+  '0DV.F': {
+    source: 'stooq',
+    name: 'Rubber - SHFE',
+    quoteCurrency: 'CNY',
+    quoteUnit: 'ton',
+  },
+  // JPX rubber fallback. Unit handling remains conservative.
+  '0CK.F': {
+    source: 'stooq',
+    name: 'Rubber - JPX',
+    quoteCurrency: 'JPY',
+    quoteUnit: 'ton',
+  },
+};
+
 const MAX_ANALYSIS_LENGTH = 260;
 const MAX_RECOMMENDATIONS = 6;
 const MAX_RECOMMENDATION_LENGTH = 140;
 
+const FX_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const HISTORY_CACHE_TTL_MS = 15 * 60 * 1000;
+
+const fxCache = new Map();
+const historyCache = new Map();
+
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
 const toNumber = (value, fallback = 0) => {
-    const num = Number(value);
-    return Number.isFinite(num) ? num : fallback;
+  const num = Number(
+    String(value ?? '')
+      .replace(/,/g, '')
+      .trim()
+  );
+  return Number.isFinite(num) ? num : fallback;
 };
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-const fmtWeekday = (date) => new Date(date).toLocaleDateString('en-US', { weekday: 'short' });
-const fmtMonth = (date) => new Date(date).toLocaleDateString('en-US', { month: 'short' });
+
 const normalizeText = (value = '') => String(value || '').replace(/\s+/g, ' ').trim();
+
 const truncateText = (value = '', max = 180) => {
-    const cleaned = normalizeText(value);
-    if (cleaned.length <= max) return cleaned;
-    return `${cleaned.slice(0, max - 3).trim()}...`;
+  const cleaned = normalizeText(value);
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, max - 3).trim()}...`;
 };
 
 const sanitizeRecommendations = (recommendations = []) => {
-    if (!Array.isArray(recommendations)) return [];
-    return recommendations
-        .slice(0, MAX_RECOMMENDATIONS)
-        .map((rec) => truncateText(rec || '', MAX_RECOMMENDATION_LENGTH))
-        .filter(Boolean);
-};
-
-const sanitizeMarketSnapshot = (data) => {
-    const obj = data && typeof data.toObject === 'function' ? data.toObject() : (data || {});
-    return {
-        ...obj,
-        analysis: truncateText(obj.analysis || '', MAX_ANALYSIS_LENGTH),
-        recommendations: sanitizeRecommendations(obj.recommendations || []),
-    };
-};
-
-const buildDailySeries = (history, fallbackPrice = 0) => {
-    const grouped = new Map();
-    (history || []).forEach((entry) => {
-        const d = new Date(entry.timestamp || Date.now());
-        const dayDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-        const key = dayDate.toISOString().slice(0, 10);
-        const prev = grouped.get(key) || { sum: 0, count: 0, date: dayDate };
-        prev.sum += toNumber(entry.price, fallbackPrice);
-        prev.count += 1;
-        grouped.set(key, prev);
-    });
-
-    let points = [...grouped.values()]
-        .sort((a, b) => a.date - b.date)
-        .map((p) => ({ timestamp: p.date, price: round2(p.sum / Math.max(1, p.count)) }));
-
-    if (points.length > 7) points = points.slice(-7);
-
-    if (points.length === 0) {
-        const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-        return { labels, values: Array(7).fill(round2(fallbackPrice)) };
-    }
-
-    const values = [];
-    const labels = [];
-    const firstDate = new Date(points[0].timestamp || Date.now());
-    const firstPrice = round2(points[0].price || fallbackPrice);
-    const missing = 7 - points.length;
-
-    for (let i = missing; i > 0; i--) {
-        const d = new Date(firstDate);
-        d.setDate(d.getDate() - i);
-        labels.push(fmtWeekday(d));
-        values.push(firstPrice);
-    }
-
-    points.forEach((p) => {
-        labels.push(fmtWeekday(p.timestamp || Date.now()));
-        values.push(round2(p.price || fallbackPrice));
-    });
-
-    return { labels, values };
-};
-
-const buildMonthlySeries = (history, fallbackPrice = 0) => {
-    const grouped = new Map();
-    (history || []).forEach((entry) => {
-        const d = new Date(entry.timestamp || Date.now());
-        const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
-        const prev = grouped.get(key) || { sum: 0, count: 0, date: new Date(d.getFullYear(), d.getMonth(), 1) };
-        prev.sum += toNumber(entry.price, fallbackPrice);
-        prev.count += 1;
-        grouped.set(key, prev);
-    });
-
-    let monthly = [...grouped.values()]
-        .sort((a, b) => a.date - b.date)
-        .map((m) => ({ label: fmtMonth(m.date), value: round2(m.sum / Math.max(1, m.count)), date: m.date }));
-
-    if (monthly.length > 12) monthly = monthly.slice(-12);
-
-    if (monthly.length === 0) {
-        const now = new Date();
-        monthly = Array.from({ length: 12 }).map((_, i) => {
-            const d = new Date(now.getFullYear(), now.getMonth() - (11 - i), 1);
-            return { label: fmtMonth(d), value: round2(fallbackPrice), date: d };
-        });
-    } else if (monthly.length < 12) {
-        const first = monthly[0];
-        const missing = 12 - monthly.length;
-        const pad = [];
-        for (let i = missing; i > 0; i--) {
-            const d = new Date(first.date.getFullYear(), first.date.getMonth() - i, 1);
-            pad.push({ label: fmtMonth(d), value: first.value, date: d });
-        }
-        monthly = [...pad, ...monthly];
-    }
-
-    return {
-        labels: monthly.map((m) => m.label),
-        values: monthly.map((m) => m.value),
-    };
-};
-
-const buildChartPayload = (history, fallbackPrice = 0) => {
-    const daily = buildDailySeries(history, fallbackPrice);
-    const monthly = buildMonthlySeries(history, fallbackPrice);
-    return {
-        dailyHistory: daily.values,
-        dailyLabels: daily.labels,
-        monthlyHistory: monthly.values,
-        monthlyLabels: monthly.labels,
-    };
+  if (!Array.isArray(recommendations)) return [];
+  return recommendations
+    .slice(0, MAX_RECOMMENDATIONS)
+    .map((rec) => truncateText(rec || '', MAX_RECOMMENDATION_LENGTH))
+    .filter(Boolean);
 };
 
 const sanitizeFeatures = (features = []) => {
-    if (!Array.isArray(features)) return [];
-    return features.slice(0, 8).map((f) => ({
-        name: String(f?.name || 'Market Driver').slice(0, 120),
-        impact: ['High', 'Medium', 'Low'].includes(f?.impact) ? f.impact : 'Medium',
-        sentiment: ['Positive', 'Negative', 'Neutral'].includes(f?.sentiment) ? f.sentiment : 'Neutral',
+  if (!Array.isArray(features)) return [];
+  return features
+    .slice(0, 8)
+    .map((item) => ({
+      name: truncateText(item?.name || 'Market Driver', 120),
+      impact: ['High', 'Medium', 'Low'].includes(item?.impact) ? item.impact : 'Medium',
+      sentiment: ['Positive', 'Negative', 'Neutral'].includes(item?.sentiment)
+        ? item.sentiment
+        : 'Neutral',
     }));
+};
+
+const parseStooqCsvQuote = (content = '') => {
+  const lines = String(content || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return null;
+
+  const row = lines[1].split(',');
+  if (row.length < 8) return null;
+
+  const symbol = String(row[0] || '').trim().toUpperCase();
+  const dateStr = String(row[1] || '').trim();
+  const timeStr = String(row[2] || '00:00:00').trim();
+  const open = toNumber(row[3], NaN);
+  const high = toNumber(row[4], NaN);
+  const low = toNumber(row[5], NaN);
+  const close = toNumber(row[6], NaN);
+  const volume = toNumber(row[7], 0);
+
+  if (!symbol || !dateStr || Number.isNaN(close)) return null;
+  if (String(dateStr).toUpperCase() === 'N/D') return null;
+
+  let sourceTimestamp = new Date(`${dateStr}T${timeStr || '00:00:00'}Z`);
+  if (Number.isNaN(sourceTimestamp.getTime())) {
+    sourceTimestamp = new Date(`${dateStr}T00:00:00Z`);
+  }
+  if (Number.isNaN(sourceTimestamp.getTime())) return null;
+
+  return {
+    symbol,
+    dateStr,
+    timeStr,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    sourceTimestamp,
+  };
+};
+
+const parseStooqHistoryRows = (html = '') => {
+  const text = String(html || '');
+  const rowRegex = /<tr><td align=center id=t03>\d+<\/td><td nowrap>([^<]+)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td><td>([^<]*)<\/td>/gi;
+  const rows = [];
+
+  let match;
+  while ((match = rowRegex.exec(text)) !== null) {
+    const dateText = normalizeText(match[1]);
+    const open = toNumber(match[2], NaN);
+    const high = toNumber(match[3], NaN);
+    const low = toNumber(match[4], NaN);
+    const close = toNumber(match[5], NaN);
+
+    if (!dateText || Number.isNaN(close)) continue;
+
+    const parsed = Date.parse(`${dateText} UTC`);
+    const parsedLocal = Date.parse(dateText);
+    const ts = Number.isFinite(parsed) ? parsed : (Number.isFinite(parsedLocal) ? parsedLocal : NaN);
+    if (Number.isNaN(ts)) continue;
+
+    rows.push({
+      timestamp: new Date(ts),
+      open: Number.isNaN(open) ? null : open,
+      high: Number.isNaN(high) ? null : high,
+      low: Number.isNaN(low) ? null : low,
+      close,
+    });
+  }
+
+  const byDay = new Map();
+  rows.forEach((row) => {
+    const day = row.timestamp.toISOString().slice(0, 10);
+    byDay.set(day, row);
+  });
+
+  return [...byDay.values()].sort((a, b) => a.timestamp - b.timestamp);
+};
+
+const getHistoryCacheKey = (symbol, from, to) => `${symbol}|${from}|${to}`;
+
+const formatDateYYYYMMDD = (date) => {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+};
+
+const fetchStooqCurrent = async (symbol) => {
+  const url = `https://stooq.com/q/l/?s=${encodeURIComponent(symbol.toLowerCase())}&f=sd2t2ohlcv&h&e=csv`;
+  const response = await axios.get(url, {
+    timeout: 12000,
+    responseType: 'text',
+    headers: { 'User-Agent': 'RubberSense/1.0' },
+  });
+
+  const parsed = parseStooqCsvQuote(response.data);
+  if (!parsed || !Number.isFinite(parsed.close) || parsed.close <= 0) {
+    throw new Error(`No valid quote from Stooq for ${symbol}`);
+  }
+  return parsed;
+};
+
+const fetchStooqHistory = async (symbol, from, to) => {
+  const cacheKey = getHistoryCacheKey(symbol, from, to);
+  const cached = historyCache.get(cacheKey);
+  if (cached && (Date.now() - cached.at) < HISTORY_CACHE_TTL_MS) {
+    return cached.rows;
+  }
+
+  const url = `https://stooq.com/q/d/?s=${encodeURIComponent(symbol.toLowerCase())}&i=d&f=${from}&t=${to}`;
+  const response = await axios.get(url, {
+    timeout: 15000,
+    responseType: 'text',
+    headers: { 'User-Agent': 'RubberSense/1.0' },
+  });
+
+  const rows = parseStooqHistoryRows(response.data);
+  historyCache.set(cacheKey, { at: Date.now(), rows });
+  return rows;
+};
+
+const fetchFxRate = async (base, quote) => {
+  const b = String(base || '').toUpperCase();
+  const q = String(quote || '').toUpperCase();
+  if (!b || !q) throw new Error('Invalid FX pair');
+  if (b === q) return 1;
+
+  const key = `${b}-${q}`;
+  const cached = fxCache.get(key);
+  if (cached && (Date.now() - cached.at) < FX_CACHE_TTL_MS) {
+    return cached.rate;
+  }
+
+  const url = `https://open.er-api.com/v6/latest/${encodeURIComponent(b)}`;
+  const response = await axios.get(url, {
+    timeout: 12000,
+    headers: { 'User-Agent': 'RubberSense/1.0' },
+  });
+
+  const rate = toNumber(response?.data?.rates?.[q], NaN);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error(`Failed FX lookup ${b}->${q}`);
+  }
+
+  fxCache.set(key, { at: Date.now(), rate });
+  return rate;
+};
+
+const convertQuoteToPhpPerKg = (quotePrice, meta, fxRate) => {
+  const raw = toNumber(quotePrice, NaN);
+  if (!Number.isFinite(raw) || raw <= 0) return NaN;
+
+  const quoteUnit = String(meta?.quoteUnit || 'ton').toLowerCase();
+  const quoteCurrency = String(meta?.quoteCurrency || 'CNY').toUpperCase();
+  const finalFx = Number.isFinite(fxRate) && fxRate > 0 ? fxRate : 1;
+
+  // Normalize quote to "quoteCurrency per kg".
+  let perKg = raw;
+  if (quoteUnit === 'ton' || quoteUnit === 'tonne' || quoteUnit === 't') {
+    perKg = raw / 1000;
+  } else if (quoteUnit === '100kg') {
+    perKg = raw / 100;
+  }
+
+  // Convert quoteCurrency to PHP.
+  if (quoteCurrency !== 'PHP') {
+    perKg = perKg * finalFx;
+  }
+
+  return round2(perKg);
+};
+
+const buildTrend = (currentPrice, previousPrice) => {
+  const current = toNumber(currentPrice, 0);
+  const prev = toNumber(previousPrice, 0);
+  const change = prev > 0 ? ((current - prev) / prev) * 100 : 0;
+  const priceChange = round2(change);
+  const trend = priceChange > 0 ? 'RISE' : priceChange < 0 ? 'FALL' : 'NEUTRAL';
+  return { priceChange, trend };
+};
+
+const buildDeterministicProjection = (currentPrice, priceChange) => {
+  const current = toNumber(currentPrice, 0);
+  if (!Number.isFinite(current) || current <= 0) return 0;
+  const boundedChange = clamp(toNumber(priceChange, 0) / 100, -0.12, 0.12);
+  return round2(current * (1 + (boundedChange * 0.6)));
+};
+
+const normalizeNextWeekProjection = ({ candidate, currentPrice, priceChange }) => {
+  const current = toNumber(currentPrice, 0);
+  const change = toNumber(priceChange, 0);
+  const deterministic = buildDeterministicProjection(current, change);
+
+  if (!Number.isFinite(current) || current <= 0) {
+    return round2(toNumber(candidate, deterministic));
+  }
+
+  let normalized = toNumber(candidate, NaN);
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return deterministic;
+  }
+
+  // Correct common unit mismatches from LLM output:
+  // - per ton (x1000 compared to PHP/kg)
+  // - per 100kg (x100 compared to PHP/kg)
+  if (normalized >= current * 500 && normalized <= current * 5000) {
+    normalized = normalized / 1000;
+  } else if (normalized >= current * 50 && normalized <= current * 500) {
+    normalized = normalized / 100;
+  }
+
+  const weeklyBoundPct = clamp(Math.max(Math.abs(change) * 1.5, 4), 4, 20);
+  const minAllowed = current * (1 - (weeklyBoundPct / 100));
+  const maxAllowed = current * (1 + (weeklyBoundPct / 100));
+
+  if (normalized < minAllowed || normalized > maxAllowed) {
+    return deterministic;
+  }
+
+  return round2(normalized);
+};
+
+const safeJsonParse = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    const first = value.indexOf('{');
+    const last = value.lastIndexOf('}');
+    if (first === -1 || last === -1 || last <= first) return null;
+    try {
+      return JSON.parse(value.slice(first, last + 1));
+    } catch {
+      return null;
+    }
+  }
+};
+
+const buildDeterministicFallbackInsight = ({ trend, priceChange, currentPrice, sourceName }) => {
+  const movement = priceChange > 0
+    ? 'edged higher'
+    : priceChange < 0
+      ? 'moved lower'
+      : 'held steady';
+  const absChange = Math.abs(priceChange).toFixed(2);
+
+  const analysis = truncateText(
+    `Latest ${sourceName} session ${movement} (${absChange}%). Current reference is PHP ${currentPrice.toFixed(2)} per kg after FX normalization.`,
+    MAX_ANALYSIS_LENGTH
+  );
+
+  const recommendations = sanitizeRecommendations([
+    trend === 'FALL'
+      ? 'Delay non-urgent spot selling and monitor next trading session for confirmation.'
+      : 'Secure partial sales while price remains favorable and keep inventory quality consistent.',
+    'Track daily session closes before changing tapping or selling strategy.',
+    'Use this as market reference and align farmgate negotiation per kg.'
+  ]);
+
+  const features = sanitizeFeatures([
+    { name: 'Latest exchange session close', impact: 'High', sentiment: trend === 'FALL' ? 'Negative' : trend === 'RISE' ? 'Positive' : 'Neutral' },
+    { name: 'FX normalization to PHP/kg', impact: 'Medium', sentiment: 'Neutral' },
+  ]);
+
+  return {
+    analysis,
+    recommendations,
+    features,
+    confidence: 72,
+  };
+};
+
+const buildInsightWithGroq = async ({
+  sourceName,
+  symbol,
+  sourcePrice,
+  sourceCurrency,
+  sourceUnit,
+  phpPerKg,
+  previousPhpPerKg,
+  priceChange,
+  trend,
+}) => {
+  if (!GROQ_API_KEY) {
+    return buildDeterministicFallbackInsight({
+      trend,
+      priceChange,
+      currentPrice: phpPerKg,
+      sourceName,
+    });
+  }
+
+  const systemPrompt = [
+    'You are a rubber market analyst.',
+    'You are given factual latest market data from a provider.',
+    'Do not invent or override the current price.',
+    'nextWeekProjection must be in PHP per kg (same unit as phpPerKg).',
+    'Keep nextWeekProjection realistic for 1 week: usually within +/-20% of phpPerKg.',
+    'Return strict JSON only:',
+    '{',
+    '  "analysis": "max 70 words",',
+    '  "recommendations": ["max 6 concise items"],',
+    '  "features": [{"name":"string","impact":"High|Medium|Low","sentiment":"Positive|Negative|Neutral"}],',
+    '  "nextWeekProjection": number,',
+    '  "confidence": number',
+    '}',
+  ].join(' ');
+
+  const userPayload = {
+    sourceName,
+    symbol,
+    sourcePrice,
+    sourceCurrency,
+    sourceUnit,
+    phpPerKg,
+    previousPhpPerKg,
+    dayChangePercent: priceChange,
+    trend,
+  };
+
+  try {
+    const response = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: GROQ_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: JSON.stringify(userPayload) },
+        ],
+        temperature: 0.2,
+        max_tokens: 350,
+        response_format: { type: 'json_object' },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: GROQ_TIMEOUT_MS,
+      }
+    );
+
+    const content = response?.data?.choices?.[0]?.message?.content;
+    const parsed = safeJsonParse(content);
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Invalid Groq JSON');
+    }
+
+    const analysis = truncateText(parsed.analysis || '', MAX_ANALYSIS_LENGTH);
+    const recommendations = sanitizeRecommendations(parsed.recommendations || []);
+    const features = sanitizeFeatures(parsed.features || []);
+
+    const nextWeekProjection = normalizeNextWeekProjection({
+      candidate: parsed.nextWeekProjection,
+      currentPrice: phpPerKg,
+      priceChange,
+    });
+
+    const confidence = clamp(toNumber(parsed.confidence, 76), 0, 100);
+
+    return {
+      analysis: analysis || buildDeterministicFallbackInsight({ trend, priceChange, currentPrice: phpPerKg, sourceName }).analysis,
+      recommendations: recommendations.length > 0
+        ? recommendations
+        : buildDeterministicFallbackInsight({ trend, priceChange, currentPrice: phpPerKg, sourceName }).recommendations,
+      features: features.length > 0
+        ? features
+        : buildDeterministicFallbackInsight({ trend, priceChange, currentPrice: phpPerKg, sourceName }).features,
+      nextWeekProjection,
+      confidence,
+    };
+  } catch (error) {
+    const fallback = buildDeterministicFallbackInsight({
+      trend,
+      priceChange,
+      currentPrice: phpPerKg,
+      sourceName,
+    });
+    return {
+      ...fallback,
+      nextWeekProjection: buildDeterministicProjection(phpPerKg, priceChange),
+    };
+  }
+};
+
+const toDayKey = (date) => {
+  const d = new Date(date);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const mergeHistoryPoints = ({ dbPoints = [], sourcePoints = [], latestPoint = null }) => {
+  const byDay = new Map();
+
+  const pushPoint = (point) => {
+    const ts = new Date(point?.timestamp || Date.now());
+    const price = toNumber(point?.price, NaN);
+    if (Number.isNaN(ts.getTime()) || !Number.isFinite(price) || price <= 0) return;
+    byDay.set(toDayKey(ts), {
+      timestamp: ts,
+      price: round2(price),
+    });
+  };
+
+  dbPoints.forEach(pushPoint);
+  sourcePoints.forEach(pushPoint);
+  if (latestPoint) pushPoint(latestPoint);
+
+  return [...byDay.values()].sort((a, b) => a.timestamp - b.timestamp);
+};
+
+const padSeriesLeft = (points, total, defaultPrice) => {
+  const base = [...points];
+  if (base.length === 0) {
+    return Array.from({ length: total }).map((_, idx) => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() - (total - 1 - idx));
+      return { timestamp: date, price: round2(defaultPrice) };
+    });
+  }
+
+  while (base.length < total) {
+    const first = base[0];
+    const date = new Date(first.timestamp);
+    date.setUTCDate(date.getUTCDate() - 1);
+    base.unshift({ timestamp: date, price: first.price });
+  }
+
+  return base.slice(-total);
+};
+
+const fmtDayLabel = (date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const fmtMonthLabel = (date) => new Date(date).toLocaleDateString('en-US', { month: 'short' });
+
+const buildDaySeries = (points, fallbackPrice) => {
+  const sliced = padSeriesLeft(points.slice(-24), 24, fallbackPrice);
+  return {
+    labels: sliced.map((p) => fmtDayLabel(p.timestamp)),
+    values: sliced.map((p) => round2(p.price)),
+  };
+};
+
+const buildMonthSeries = (points, fallbackPrice) => {
+  const sliced = padSeriesLeft(points.slice(-30), 30, fallbackPrice);
+  return {
+    labels: sliced.map((p) => fmtDayLabel(p.timestamp)),
+    values: sliced.map((p) => round2(p.price)),
+  };
+};
+
+const buildYearSeries = (points, fallbackPrice) => {
+  const grouped = new Map();
+  points.forEach((point) => {
+    const d = new Date(point.timestamp);
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}`;
+    const current = grouped.get(key) || {
+      date: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)),
+      sum: 0,
+      count: 0,
+    };
+    current.sum += toNumber(point.price, 0);
+    current.count += 1;
+    grouped.set(key, current);
+  });
+
+  let monthly = [...grouped.values()]
+    .sort((a, b) => a.date - b.date)
+    .map((item) => ({
+      timestamp: item.date,
+      price: round2(item.sum / Math.max(1, item.count)),
+    }));
+
+  if (monthly.length === 0) {
+    const now = new Date();
+    monthly = Array.from({ length: 12 }).map((_, idx) => {
+      const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (11 - idx), 1));
+      return { timestamp: date, price: round2(fallbackPrice) };
+    });
+  } else if (monthly.length < 12) {
+    const first = monthly[0];
+    const missing = 12 - monthly.length;
+    const prefix = Array.from({ length: missing }).map((_, idx) => {
+      const date = new Date(first.timestamp);
+      date.setUTCMonth(date.getUTCMonth() - (missing - idx));
+      return { timestamp: date, price: first.price };
+    });
+    monthly = [...prefix, ...monthly];
+  } else {
+    monthly = monthly.slice(-12);
+  }
+
+  return {
+    labels: monthly.map((p) => fmtMonthLabel(p.timestamp)),
+    values: monthly.map((p) => round2(p.price)),
+  };
+};
+
+const buildChartPayload = (points, fallbackPrice) => {
+  const daySeries = buildDaySeries(points, fallbackPrice);
+  const monthSeries = buildMonthSeries(points, fallbackPrice);
+  const yearSeries = buildYearSeries(points, fallbackPrice);
+
+  return {
+    dayHistory: daySeries.values,
+    dayLabels: daySeries.labels,
+    monthHistory: monthSeries.values,
+    monthLabels: monthSeries.labels,
+    yearHistory: yearSeries.values,
+    yearLabels: yearSeries.labels,
+
+    // Backward compatibility fields.
+    dailyHistory: daySeries.values,
+    dailyLabels: daySeries.labels,
+    monthlyHistory: yearSeries.values,
+    monthlyLabels: yearSeries.labels,
+  };
+};
+
+const sanitizeMarketSnapshot = (doc = {}) => {
+  const obj = doc && typeof doc.toObject === 'function' ? doc.toObject() : { ...(doc || {}) };
+  return {
+    ...obj,
+    nextWeekProjection: normalizeNextWeekProjection({
+      candidate: obj.nextWeekProjection,
+      currentPrice: obj.price,
+      priceChange: obj.priceChange,
+    }),
+    analysis: truncateText(obj.analysis || '', MAX_ANALYSIS_LENGTH),
+    recommendations: sanitizeRecommendations(obj.recommendations || []),
+    features: sanitizeFeatures(obj.features || []),
+  };
+};
+
+const getSourceMeta = (symbol) => SOURCE_META[symbol] || {
+  source: 'stooq',
+  name: `Rubber - ${symbol}`,
+  quoteCurrency: 'CNY',
+  quoteUnit: 'ton',
+};
+
+const getLatestStored = () => MarketData.findOne({ source: 'stooq' }).sort({ timestamp: -1 });
+
+const getStoredHistory = async () => {
+  const rowsDesc = await MarketData.find({ source: 'stooq' })
+    .sort({ timestamp: -1 })
+    .limit(1200)
+    .lean();
+  return [...rowsDesc].reverse();
+};
+
+const fetchLiveRubberData = async () => {
+  let lastError = null;
+  for (const symbol of SOURCE_SYMBOLS) {
+    try {
+      const meta = getSourceMeta(symbol);
+      const quote = await fetchStooqCurrent(symbol);
+      const fromDate = new Date(Date.now() - MARKET_HISTORY_DAYS * 24 * 60 * 60 * 1000);
+      const from = formatDateYYYYMMDD(fromDate);
+      const to = formatDateYYYYMMDD(new Date());
+      const history = await fetchStooqHistory(symbol, from, to);
+
+      const fxRate = await fetchFxRate(meta.quoteCurrency, 'PHP');
+      const currentPrice = convertQuoteToPhpPerKg(quote.close, meta, fxRate);
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        throw new Error(`Converted price invalid for ${symbol}`);
+      }
+
+      const latestSourceRow = history.length > 0 ? history[history.length - 1] : null;
+      const previousSourceRow = history.length > 1 ? history[history.length - 2] : null;
+      const previousPhpPrice = previousSourceRow
+        ? convertQuoteToPhpPerKg(previousSourceRow.close, meta, fxRate)
+        : currentPrice;
+
+      const sourcePoints = history.map((row) => ({
+        timestamp: row.timestamp,
+        price: convertQuoteToPhpPerKg(row.close, meta, fxRate),
+      })).filter((row) => Number.isFinite(row.price) && row.price > 0);
+
+      return {
+        symbol,
+        meta,
+        quote,
+        history,
+        sourcePoints,
+        fxRate,
+        currentPrice,
+        previousPhpPrice,
+        latestSourceTimestamp: latestSourceRow?.timestamp || quote.sourceTimestamp,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('No source symbol returned data');
 };
 
 // GET /api/market/latest
 router.get('/latest', async (req, res) => {
-    try {
-        const forceRefresh = req.query.force === 'true';
-        
-        // 1. Check for recent cached data
-        const cacheCutoff = new Date(Date.now() - MARKET_CACHE_HOURS * 60 * 60 * 1000);
-        const latestData = await MarketData.findOne().sort({ timestamp: -1 });
-        const recentHistoryDesc = await MarketData.find().sort({ timestamp: -1 }).limit(500).lean();
-        const recentHistory = [...recentHistoryDesc].reverse();
+  try {
+    const forceRefresh = req.query.force === 'true';
+    const cacheCutoff = new Date(Date.now() - MARKET_CACHE_MINUTES * 60 * 1000);
 
-        if (!forceRefresh && latestData && latestData.timestamp > cacheCutoff) {
-            const chartPayload = buildChartPayload(recentHistory, latestData.price);
-            return res.json({
-                success: true,
-                data: {
-                    ...sanitizeMarketSnapshot(latestData),
-                    ...chartPayload
-                }
-            });
-        }
+    const latestStored = await getLatestStored();
+    const storedHistory = await getStoredHistory();
 
-        // 2. Fetch new data from Groq AI
-        if (!GROQ_API_KEY) {
-            if (latestData) {
-                const chartPayload = buildChartPayload(recentHistory, latestData.price);
-                return res.json({
-                    success: true,
-                    data: {
-                        ...sanitizeMarketSnapshot(latestData),
-                        ...chartPayload,
-                        stale: true
-                    }
-                });
-            }
-            return res.status(500).json({ success: false, error: 'Market AI key is missing' });
-        }
+    if (!forceRefresh && latestStored && new Date(latestStored.timestamp) > cacheCutoff) {
+      const fromDate = new Date(Date.now() - MARKET_HISTORY_DAYS * 24 * 60 * 60 * 1000);
+      const from = formatDateYYYYMMDD(fromDate);
+      const to = formatDateYYYYMMDD(new Date());
+      let sourcePoints = [];
+      try {
+        const symbol = latestStored.sourceSymbol || SOURCE_SYMBOLS[0];
+        const meta = getSourceMeta(symbol);
+        const fxRate = await fetchFxRate(meta.quoteCurrency, 'PHP');
+        const history = await fetchStooqHistory(symbol, from, to);
+        sourcePoints = history.map((row) => ({
+          timestamp: row.timestamp,
+          price: convertQuoteToPhpPerKg(row.close, meta, fxRate),
+        }));
+      } catch {
+        sourcePoints = [];
+      }
 
-        console.log('Fetching fresh market analysis from Groq AI...');
-        
-        const systemPrompt = `You are an expert agricultural economist specializing in the rubber industry. 
-        Provide an updated market analysis for Latex (RSS3) prices in the Philippines (PHP/kg).
-        Use realistic values and return strict JSON:
-        {
-            "price": number,
-            "trend": "RISE" | "FALL" | "NEUTRAL",
-            "priceChange": number,
-            "analysis": "Concise summary (max 70 words)",
-            "recommendations": ["Rec 1", "Rec 2", "Rec 3"],
-            "features": [{"name": "Driver", "impact": "High"|"Medium"|"Low", "sentiment": "Positive"|"Negative"|"Neutral"}],
-            "nextWeekProjection": number,
-            "confidence": number
-        }`;
+      const mergedPoints = mergeHistoryPoints({
+        dbPoints: storedHistory.map((item) => ({ timestamp: item.timestamp, price: item.price })),
+        sourcePoints,
+        latestPoint: { timestamp: latestStored.sourceTimestamp || latestStored.timestamp, price: latestStored.price },
+      });
 
-        const response = await axios.post(
-            'https://api.groq.com/openai/v1/chat/completions',
-            {
-                model: GROQ_MODEL,
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: "Get latest rubber market update." }
-                ],
-                temperature: 0.4,
-                max_tokens: 450,
-                response_format: { type: "json_object" }
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${GROQ_API_KEY}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: GROQ_TIMEOUT_MS
-            }
-        );
-
-        const content = response.data.choices[0]?.message?.content;
-        let aiData;
-        try {
-            aiData = JSON.parse(content);
-        } catch (e) {
-            console.error("Failed to parse AI JSON:", content);
-            throw new Error("Invalid AI response format");
-        }
-
-        const previousPrice = toNumber(latestData?.price, 0);
-        let nextPrice = toNumber(aiData?.price, previousPrice);
-        if (nextPrice <= 0 && previousPrice > 0) nextPrice = previousPrice;
-
-        const computedChange = previousPrice > 0 ? round2(((nextPrice - previousPrice) / previousPrice) * 100) : 0;
-        const aiChange = toNumber(aiData?.priceChange, computedChange);
-        const priceChange = round2(aiChange);
-
-        let trend = String(aiData?.trend || '').toUpperCase();
-        if (!['RISE', 'FALL', 'NEUTRAL'].includes(trend)) {
-            trend = priceChange > 0 ? 'RISE' : priceChange < 0 ? 'FALL' : 'NEUTRAL';
-        }
-
-        const nextWeekProjection = round2(
-            toNumber(aiData?.nextWeekProjection, nextPrice * (1 + priceChange / 100))
-        );
-
-        const newMarketData = new MarketData({
-            price: round2(nextPrice),
-            trend,
-            priceChange,
-            analysis: truncateText(aiData?.analysis || '', MAX_ANALYSIS_LENGTH),
-            recommendations: sanitizeRecommendations(aiData?.recommendations || []),
-            features: sanitizeFeatures(aiData?.features),
-            nextWeekProjection,
-            confidence: clamp(toNumber(aiData?.confidence, 70), 0, 100),
-            timestamp: new Date()
-        });
-
-        await newMarketData.save();
-
-        // 3. Build chart payload from actual stored history
-        const updatedHistoryDesc = await MarketData.find().sort({ timestamp: -1 }).limit(500).lean();
-        const updatedHistory = [...updatedHistoryDesc].reverse();
-        const chartPayload = buildChartPayload(updatedHistory, newMarketData.price);
-
-        res.json({
-            success: true,
-            data: {
-                ...sanitizeMarketSnapshot(newMarketData),
-                ...chartPayload
-            }
-        });
-
-    } catch (error) {
-        console.error('Market API Error:', error.message);
-        try {
-            const latestData = await MarketData.findOne().sort({ timestamp: -1 });
-            if (latestData) {
-                const recentHistoryDesc = await MarketData.find().sort({ timestamp: -1 }).limit(500).lean();
-                const recentHistory = [...recentHistoryDesc].reverse();
-                const chartPayload = buildChartPayload(recentHistory, latestData.price);
-                return res.json({
-                    success: true,
-                    data: {
-                        ...sanitizeMarketSnapshot(latestData),
-                        ...chartPayload,
-                        stale: true
-                    }
-                });
-            }
-        } catch (fallbackErr) {
-            console.error('Market fallback failed:', fallbackErr.message);
-        }
-
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to fetch market data',
-            details: error.message 
-        });
+      const chartPayload = buildChartPayload(mergedPoints, latestStored.price);
+      return res.json({
+        success: true,
+        data: {
+          ...sanitizeMarketSnapshot(latestStored),
+          ...chartPayload,
+          stale: false,
+        },
+      });
     }
+
+    const live = await fetchLiveRubberData();
+    const { priceChange, trend } = buildTrend(live.currentPrice, live.previousPhpPrice);
+
+    const insights = await buildInsightWithGroq({
+      sourceName: live.meta.name,
+      symbol: live.symbol,
+      sourcePrice: live.quote.close,
+      sourceCurrency: live.meta.quoteCurrency,
+      sourceUnit: live.meta.quoteUnit,
+      phpPerKg: live.currentPrice,
+      previousPhpPerKg: live.previousPhpPrice,
+      priceChange,
+      trend,
+    });
+
+    const nextWeekProjection = normalizeNextWeekProjection({
+      candidate: insights?.nextWeekProjection,
+      currentPrice: live.currentPrice,
+      priceChange,
+    });
+    const confidence = clamp(toNumber(insights?.confidence, 75), 0, 100);
+
+    const upsertFilter = {
+      source: 'stooq',
+      sourceSymbol: live.symbol,
+      sourceTimestamp: live.latestSourceTimestamp,
+    };
+
+    const upsertPayload = {
+      timestamp: new Date(),
+      source: 'stooq',
+      sourceSymbol: live.symbol,
+      sourceTimestamp: live.latestSourceTimestamp,
+      sourcePrice: round2(live.quote.close),
+      sourceCurrency: live.meta.quoteCurrency,
+      sourceUnit: live.meta.quoteUnit,
+      fxRate: live.fxRate,
+      price: round2(live.currentPrice),
+      currency: 'PHP',
+      unit: 'kg',
+      trend,
+      priceChange,
+      analysis: truncateText(insights?.analysis || '', MAX_ANALYSIS_LENGTH),
+      recommendations: sanitizeRecommendations(insights?.recommendations || []),
+      features: sanitizeFeatures(insights?.features || []),
+      nextWeekProjection,
+      confidence,
+    };
+
+    const saved = await MarketData.findOneAndUpdate(
+      upsertFilter,
+      { $set: upsertPayload },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    const latestForResponse = saved || latestStored;
+    const mergedPoints = mergeHistoryPoints({
+      dbPoints: storedHistory.map((item) => ({ timestamp: item.timestamp, price: item.price })),
+      sourcePoints: live.sourcePoints,
+      latestPoint: {
+        timestamp: live.latestSourceTimestamp,
+        price: live.currentPrice,
+      },
+    });
+
+    const chartPayload = buildChartPayload(mergedPoints, live.currentPrice);
+
+    res.json({
+      success: true,
+      data: {
+        ...sanitizeMarketSnapshot(latestForResponse),
+        ...chartPayload,
+        stale: false,
+      },
+    });
+  } catch (error) {
+    console.error('Market API Error:', error.message);
+    try {
+      const latestStored = await getLatestStored();
+      if (latestStored) {
+        const storedHistory = await getStoredHistory();
+        const mergedPoints = mergeHistoryPoints({
+          dbPoints: storedHistory.map((item) => ({ timestamp: item.timestamp, price: item.price })),
+          sourcePoints: [],
+          latestPoint: {
+            timestamp: latestStored.sourceTimestamp || latestStored.timestamp,
+            price: latestStored.price,
+          },
+        });
+        const chartPayload = buildChartPayload(mergedPoints, latestStored.price);
+        return res.json({
+          success: true,
+          data: {
+            ...sanitizeMarketSnapshot(latestStored),
+            ...chartPayload,
+            stale: true,
+          },
+        });
+      }
+    } catch (fallbackError) {
+      console.error('Market fallback failed:', fallbackError.message);
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch market data',
+      details: error.message,
+    });
+  }
 });
 
 // GET /api/market/history
 router.get('/history', async (req, res) => {
-    try {
-        const historyDesc = await MarketData.find().sort({ timestamp: -1 }).limit(365).lean();
-        const history = [...historyDesc].reverse();
-        res.json({ success: true, data: history });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
+  try {
+    const includeAll = req.query.all === 'true';
+    const filter = includeAll ? {} : { source: 'stooq' };
+    const historyDesc = await MarketData.find(filter).sort({ timestamp: -1 }).limit(365).lean();
+    const history = [...historyDesc].reverse();
+    res.json({ success: true, data: history });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 module.exports = router;

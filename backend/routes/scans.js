@@ -9,6 +9,8 @@ const path = require('path');
 const axios = require('axios');
 const Scan = require('../models/Scan');
 const Tree = require('../models/Tree');
+const LeafAnalysis = require('../models/LeafAnalysis');
+const TrunksAnalysis = require('../models/TrunksAnalysis');
 const { protect } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 const { uploadToCloudinary } = require('../config/cloudinary');
@@ -196,6 +198,350 @@ const normalizeTreeAnalysisResult = (analysisResults = {}) => {
   };
 };
 
+const severityTextToScore = (value) => {
+  const severity = String(value || '').toLowerCase();
+  if (severity === 'critical') return 10;
+  if (['high', 'severe'].includes(severity)) return 8;
+  if (['moderate', 'medium'].includes(severity)) return 6;
+  if (['low', 'mild'].includes(severity)) return 3;
+  return 0;
+};
+
+const normalizeClassName = (value) =>
+  String(value || 'unknown')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'unknown';
+
+const toRecommendationList = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  if (typeof value === 'object') return Object.values(value).map((item) => String(item || '').trim()).filter(Boolean);
+  return String(value)
+    .split(/\n|;\s+|\|\s*/)
+    .map((item) => item.replace(/^[-*•]\s*/, '').trim())
+    .filter(Boolean);
+};
+
+const looksHealthyDetection = (disease = {}, healthStatus) => {
+  const name = String(disease?.name || '').toLowerCase();
+  const severity = String(disease?.severity || '').toLowerCase();
+  const status = String(healthStatus || '').toLowerCase();
+  const aiText = readMixedText(disease?.ai_diagnosis).toLowerCase();
+
+  return (
+    severity === 'none' ||
+    status === 'healthy' ||
+    /healthy|no disease|disease[-\s]?free/.test(name) ||
+    /no\s+(signs?|evidence)\s+of\s+(disease|infection)|no disease detected|tree is healthy|appears healthy/.test(aiText)
+  );
+};
+
+const maturityToAge = (maturity) => {
+  const value = String(maturity || '').toLowerCase();
+  if (value === 'immature') return 5;
+  if (value === 'mature') return 15;
+  return undefined;
+};
+
+const deriveTrunkHealthScore = (scan, primaryDisease, healthy) => {
+  const tappabilityScore = Number(scan?.tappabilityAssessment?.score);
+  if (Number.isFinite(tappabilityScore)) return Math.max(0, Math.min(100, tappabilityScore));
+  if (healthy) return 90;
+  const severity = String(primaryDisease?.severity || '').toLowerCase();
+  if (severity === 'critical') return 20;
+  if (['high', 'severe'].includes(severity)) return 35;
+  if (['moderate', 'medium'].includes(severity)) return 55;
+  if (['low', 'mild'].includes(severity)) return 70;
+  return 60;
+};
+
+const normalizeLegacySeverity = (severityLevel, severityScore = 0, fallback = 'unknown') => {
+  const level = String(severityLevel || '').toLowerCase().trim();
+  if (level.includes('critical')) return 'critical';
+  if (level.includes('high') || level.includes('severe')) return 'high';
+  if (level.includes('moderate') || level.includes('medium')) return 'moderate';
+  if (level.includes('low') || level.includes('mild')) return 'low';
+  if (level === 'none' || level === 'healthy') return 'none';
+
+  const score = Number(severityScore);
+  if (!Number.isFinite(score) || score <= 0) return fallback;
+  if (score >= 80) return 'critical';
+  if (score >= 60) return 'high';
+  if (score >= 35) return 'moderate';
+  return 'low';
+};
+
+const extractScanDedupKeys = (item = {}) => {
+  const values = [
+    item?.cloudinaryID,
+    item?.imagePublicId,
+    item?.imageURL,
+    item?.imageUrl
+  ];
+
+  return [...new Set(
+    values
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter(Boolean)
+  )];
+};
+
+const toDateValue = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 0;
+  return date.getTime();
+};
+
+const mapLegacyLeafAnalysisToScan = (entry = {}) => {
+  const full = entry?.fullAnalysis && typeof entry.fullAnalysis === 'object'
+    ? entry.fullAnalysis
+    : {};
+
+  const diseaseDetected = String(entry?.diseaseDetected || full?.diseaseDetection?.[0]?.name || 'Unknown').trim();
+  const severityScore = Number(entry?.severity || 0);
+  const markedHealthyByName = /healthy|no disease|disease[-\s]?free|normal/i.test(diseaseDetected);
+  const severity = markedHealthyByName
+    ? 'none'
+    : normalizeLegacySeverity(entry?.severityLevel, severityScore, severityScore > 0 ? 'moderate' : 'none');
+  const healthStatus = severity === 'none' ? 'healthy' : 'diseased';
+
+  const recommendationText = toRecommendationList(entry?.treatmentRecommendations).join('; ');
+  const confidence = Math.max(0, Math.min(100, Number(entry?.confidence || full?.treeIdentification?.confidence || 0)));
+  const createdAt = entry?.createdAt || full?.createdAt || new Date();
+  const updatedAt = entry?.updatedAt || full?.updatedAt || createdAt;
+
+  const diseaseDetection = Array.isArray(full?.diseaseDetection) && full.diseaseDetection.length > 0
+    ? full.diseaseDetection
+    : [{
+        name: diseaseDetected || (severity === 'none' ? 'No disease detected' : 'Unknown'),
+        confidence,
+        severity,
+        recommendation: recommendationText,
+        ai_diagnosis: null
+      }];
+
+  return {
+    ...full,
+    _id: `legacy-leaf-${String(entry?._id || '')}`,
+    legacyOriginalId: String(entry?._id || ''),
+    isLegacyScan: true,
+    sourceModel: 'LeafAnalysis',
+    scanType: 'tree',
+    imageURL: full?.imageURL || full?.imageUrl || entry?.imageUrl || null,
+    imageUrl: full?.imageUrl || full?.imageURL || entry?.imageUrl || null,
+    cloudinaryID: full?.cloudinaryID || entry?.imagePublicId || null,
+    imagePublicId: entry?.imagePublicId || full?.cloudinaryID || null,
+    createdAt,
+    updatedAt,
+    tree: full?.tree || null,
+    treeIdentification: {
+      ...(full?.treeIdentification || {}),
+      detectedPart: 'leaf',
+      confidence
+    },
+    leafAnalysis: {
+      ...(full?.leafAnalysis || {}),
+      healthStatus,
+      color: full?.leafAnalysis?.color || entry?.colorAnalysis?.primaryColor || 'unknown',
+      spotCount: Number(entry?.spotsCount || full?.leafAnalysis?.spotCount || 0)
+    },
+    diseaseDetection,
+    processingStatus: full?.processingStatus || 'completed',
+    aiInsights: full?.aiInsights || null,
+    tappabilityAssessment: full?.tappabilityAssessment || null,
+    productivityRecommendation: full?.productivityRecommendation || null
+  };
+};
+
+const mapLegacyTrunkAnalysisToScan = (entry = {}) => {
+  const full = entry?.fullAnalysis && typeof entry.fullAnalysis === 'object'
+    ? entry.fullAnalysis
+    : {};
+
+  const primary = entry?.primaryDetection || {};
+  const confidence = Math.max(
+    0,
+    Math.min(100, Number(primary?.confidence || full?.treeIdentification?.confidence || 0))
+  );
+
+  const severeText = primary?.severity || '';
+  const healthScore = Number(entry?.healthScore || 0);
+  const healthyByClass = /healthy|none/i.test(String(primary?.class || ''));
+  const severity = healthyByClass
+    ? 'none'
+    : normalizeLegacySeverity(severeText, 100 - healthScore, healthScore >= 80 ? 'none' : 'moderate');
+  const healthStatus = severity === 'none' ? 'healthy' : 'diseased';
+  const diseaseName = healthStatus === 'healthy'
+    ? 'No disease detected'
+    : String(primary?.display_name || primary?.name || 'Unknown');
+  const recommendationText = Array.isArray(entry?.careRecommendations)
+    ? entry.careRecommendations.map((item) => item?.action || item?.description || '').filter(Boolean).join('; ')
+    : '';
+  const createdAt = entry?.createdAt || full?.createdAt || new Date();
+  const updatedAt = entry?.updatedAt || full?.updatedAt || createdAt;
+
+  const diseaseDetection = Array.isArray(full?.diseaseDetection) && full.diseaseDetection.length > 0
+    ? full.diseaseDetection
+    : [{
+        name: diseaseName,
+        confidence,
+        severity,
+        recommendation: recommendationText,
+        ai_diagnosis: null
+      }];
+
+  return {
+    ...full,
+    _id: `legacy-trunk-${String(entry?._id || '')}`,
+    legacyOriginalId: String(entry?._id || ''),
+    isLegacyScan: true,
+    sourceModel: 'TrunksAnalysis',
+    scanType: 'tree',
+    imageURL: full?.imageURL || full?.imageUrl || entry?.imageUrl || null,
+    imageUrl: full?.imageUrl || full?.imageURL || entry?.imageUrl || null,
+    cloudinaryID: full?.cloudinaryID || entry?.imagePublicId || null,
+    imagePublicId: entry?.imagePublicId || full?.cloudinaryID || null,
+    createdAt,
+    updatedAt,
+    tree: full?.tree || null,
+    treeIdentification: {
+      ...(full?.treeIdentification || {}),
+      detectedPart: 'trunk',
+      confidence
+    },
+    trunkAnalysis: {
+      ...(full?.trunkAnalysis || {}),
+      healthStatus,
+      color: full?.trunkAnalysis?.color || entry?.colorAnalysis?.primaryColor || 'unknown',
+      texture: full?.trunkAnalysis?.texture || entry?.colorAnalysis?.barkCondition || 'unknown',
+      damages: healthStatus === 'healthy' ? [] : [diseaseName]
+    },
+    diseaseDetection,
+    tappabilityAssessment: full?.tappabilityAssessment || null,
+    productivityRecommendation: full?.productivityRecommendation || {
+      status: healthStatus === 'healthy' ? 'optimal' : 'at_risk',
+      suggestions: toRecommendationList(recommendationText)
+    },
+    processingStatus: full?.processingStatus || 'completed',
+    aiInsights: full?.aiInsights || null
+  };
+};
+
+const syncLegacyAnalysisModels = async (scanDoc) => {
+  if (!scanDoc || scanDoc.scanType !== 'tree') return;
+
+  const scan = typeof scanDoc.toObject === 'function' ? scanDoc.toObject() : scanDoc;
+  const primaryDisease = scan.diseaseDetection?.[0] || {};
+  const healthy = looksHealthyDetection(primaryDisease, scan?.leafAnalysis?.healthStatus || scan?.trunkAnalysis?.healthStatus);
+  const commonPayload = {
+    userId: scan.user,
+    imageUrl: scan.imageURL,
+    imagePublicId: scan.cloudinaryID
+  };
+
+  const shouldSyncLeaf = scan?.treeIdentification?.detectedPart === 'leaf' || !!scan?.leafAnalysis;
+  if (shouldSyncLeaf) {
+    const diseaseDetected = healthy ? 'Healthy' : String(primaryDisease.name || 'Unknown');
+    const confidence = Number.isFinite(Number(primaryDisease.confidence))
+      ? Number(primaryDisease.confidence)
+      : Number(scan?.treeIdentification?.confidence || 0);
+    const severity = healthy ? 0 : severityTextToScore(primaryDisease.severity);
+    const severityLevel = healthy
+      ? 'Very Low'
+      : (String(primaryDisease.severity || 'unknown').charAt(0).toUpperCase() + String(primaryDisease.severity || 'unknown').slice(1));
+
+    await LeafAnalysis.findOneAndUpdate(
+      { userId: scan.user, imagePublicId: scan.cloudinaryID },
+      {
+        ...commonPayload,
+        diseaseDetected,
+        confidence: Math.max(0, Math.min(100, confidence || 0)),
+        severity,
+        severityLevel,
+        spotsCount: Math.max(Number(scan?.leafAnalysis?.spotCount || 0), 0),
+        colorAnalysis: {
+          primaryColor: scan?.leafAnalysis?.color || 'unknown',
+          discoloration: 0,
+          healthyGreenPercentage: healthy ? 90 : 40,
+          affectedAreaPercentage: healthy ? 10 : 60
+        },
+        treatmentRecommendations: [
+          ...toRecommendationList(primaryDisease.recommendation),
+          ...toRecommendationList(primaryDisease?.ai_diagnosis?.treatment)
+        ],
+        preventionStrategies: toRecommendationList(primaryDisease?.ai_diagnosis?.prevention),
+        fullAnalysis: scan,
+        processingTime: String(scan.processingTime || 'N/A'),
+        mlModelUsed: true
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  }
+
+  const shouldSyncTrunk =
+    scan?.treeIdentification?.detectedPart === 'trunk' ||
+    scan?.treeIdentification?.detectedPart === 'whole_tree' ||
+    !!scan?.trunkAnalysis;
+  if (shouldSyncTrunk) {
+    const confidence = Number.isFinite(Number(primaryDisease.confidence))
+      ? Number(primaryDisease.confidence)
+      : Number(scan?.treeIdentification?.confidence || 0);
+    const healthScore = deriveTrunkHealthScore(scan, primaryDisease, healthy);
+    const primaryClass = healthy ? 'healthy' : normalizeClassName(primaryDisease.name);
+
+    await TrunksAnalysis.findOneAndUpdate(
+      { userId: scan.user, imagePublicId: scan.cloudinaryID },
+      {
+        ...commonPayload,
+        primaryDetection: {
+          class: primaryClass,
+          name: primaryDisease.name || (healthy ? 'Healthy' : 'Unknown'),
+          display_name: healthy ? 'Healthy' : (primaryDisease.name || 'Unknown'),
+          confidence: Math.max(0, Math.min(100, confidence || 0)),
+          severity: healthy ? 'none' : String(primaryDisease.severity || 'moderate').toLowerCase()
+        },
+        allDetections: Array.isArray(scan.diseaseDetection)
+          ? scan.diseaseDetection.map((disease) => ({
+              class: normalizeClassName(disease?.name),
+              name: disease?.name || 'Unknown',
+              display_name: disease?.name || 'Unknown',
+              confidence: Math.max(0, Math.min(100, Number(disease?.confidence || 0))),
+              severity: String(disease?.severity || 'unknown').toLowerCase()
+            }))
+          : [],
+        maturity: {
+          class: String(scan?.treeIdentification?.maturity || 'unknown').toLowerCase(),
+          confidence: Math.max(0, Math.min(100, Number(scan?.treeIdentification?.confidence || 0)))
+        },
+        colorAnalysis: {
+          primaryColor: scan?.trunkAnalysis?.color || 'unknown',
+          barkCondition: scan?.trunkAnalysis?.texture || 'unknown',
+          discoloration: 0
+        },
+        textureAnalysis: {
+          smoothness: 0,
+          roughness: 0,
+          pattern: scan?.trunkAnalysis?.texture || 'unknown'
+        },
+        healthScore,
+        ageEstimate: maturityToAge(scan?.treeIdentification?.maturity),
+        careRecommendations: toRecommendationList(primaryDisease.recommendation).map((action) => ({
+          priority: healthScore < 40 ? 'immediate' : healthScore < 65 ? 'soon' : 'routine',
+          action,
+          description: action,
+          timeframe: healthScore < 40 ? 'Immediately' : healthScore < 65 ? 'Within 7 days' : 'Routine monitoring'
+        })),
+        fullAnalysis: scan,
+        processingTime: String(scan.processingTime || 'N/A'),
+        mlModelUsed: true
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  }
+};
+
 // ============================================
 // @route   POST /api/scans/upload
 // @desc    Upload and analyze tree image
@@ -380,6 +726,12 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
     // Populate tree details before sending response
     await scan.populate('tree', 'treeID healthStatus');
 
+    try {
+      await syncLegacyAnalysisModels(scan);
+    } catch (syncErr) {
+      console.error('Legacy analysis sync failed after upload:', syncErr);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Image uploaded and analyzed successfully',
@@ -408,26 +760,66 @@ router.post('/upload', protect, upload.single('image'), async (req, res) => {
 // ============================================
 router.get('/', protect, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20; // Reduced default limit from 50 to 20
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
+    const fetchLimit = Math.min(Math.max(page * limit * 3, 120), 600);
 
-    const scans = await Scan.find({ user: req.user.id })
-      .select('scanType imageURL createdAt treeIdentification tappabilityAssessment latexQualityPrediction processingStatus trunkAnalysis leafAnalysis diseaseDetection quantityEstimation productYieldEstimation') // Select list view fields
-      .populate('tree', 'treeID location healthStatus')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(); // Use lean() for performance
+    const [scans, leafAnalyses, trunkAnalyses] = await Promise.all([
+      Scan.find({ user: req.user.id })
+        .select('scanType imageURL processedImageURL createdAt updatedAt cloudinaryID tree treeIdentification tappabilityAssessment latexQualityPrediction processingStatus trunkAnalysis leafAnalysis diseaseDetection quantityEstimation productYieldEstimation productivityRecommendation aiInsights')
+        .populate('tree', 'treeID location healthStatus')
+        .sort({ createdAt: -1 })
+        .limit(fetchLimit)
+        .lean(),
+      LeafAnalysis.find({ userId: req.user.id })
+        .sort({ createdAt: -1 })
+        .limit(fetchLimit)
+        .lean(),
+      TrunksAnalysis.find({ userId: req.user.id })
+        .sort({ createdAt: -1 })
+        .limit(fetchLimit)
+        .lean()
+    ]);
 
-    // Get total count for pagination (optional, can be skipped if too slow)
-    // const total = await Scan.countDocuments({ user: req.user.id });
+    const normalizedScans = scans.map((scan) => ({
+      ...scan,
+      isLegacyScan: false,
+      sourceModel: 'Scan'
+    }));
+
+    const seenKeys = new Set();
+    const markSeen = (item) => {
+      const keys = extractScanDedupKeys(item);
+      if (!keys.length && item?._id) {
+        seenKeys.add(String(item._id));
+        return;
+      }
+      keys.forEach((key) => seenKeys.add(key));
+    };
+    normalizedScans.forEach(markSeen);
+
+    const legacyScans = [
+      ...leafAnalyses.map((entry) => mapLegacyLeafAnalysisToScan(entry)),
+      ...trunkAnalyses.map((entry) => mapLegacyTrunkAnalysisToScan(entry))
+    ].filter((item) => {
+      const keys = extractScanDedupKeys(item);
+      if (!keys.length) return true;
+      return !keys.some((key) => seenKeys.has(key));
+    });
+
+    const mergedScans = [...normalizedScans, ...legacyScans]
+      .sort((a, b) => toDateValue(b?.createdAt) - toDateValue(a?.createdAt));
+    const pagedData = mergedScans.slice(skip, skip + limit);
+    const total = mergedScans.length;
 
     res.status(200).json({
       success: true,
-      count: scans.length,
-      // total,
-      data: scans
+      count: pagedData.length,
+      total,
+      page,
+      pages: Math.max(Math.ceil(total / limit), 1),
+      data: pagedData
     });
 
   } catch (error) {
@@ -501,7 +893,7 @@ router.post('/:id/analyze', protect, async (req, res) => {
     
     let analysisResults;
     const isLatex = scan.scanType === 'latex';
-    // FORCE FULL RE-ANALYSIS for Trees to ensure new Trunks.pt model is used
+    // FORCE FULL RE-ANALYSIS for Trees to ensure new Trunks-v2.pt model is used
     // We disable the optimization that skips CV for trees
     const hasPriorDetection = !isLatex && false; 
 
@@ -569,6 +961,30 @@ router.post('/:id/analyze', protect, async (req, res) => {
       analysisResults = normalizeTreeAnalysisResult(analysisResults);
     }
 
+    // Upload processed image (OBB/box overlays) when provided by AI output.
+    if (analysisResults.processed_image_path && fs.existsSync(analysisResults.processed_image_path)) {
+      try {
+        console.log(`📤 Uploading re-analysis processed image: ${analysisResults.processed_image_path}`);
+        const processedFile = { path: analysisResults.processed_image_path };
+        const processedUpload = await withTimeout(
+          uploadToCloudinary(processedFile, 'rubbersense/processed'),
+          45000,
+          'Processed image upload timed out'
+        );
+        scan.processedImageURL = processedUpload.url;
+      } catch (processedErr) {
+        console.error('⚠️ Failed to upload re-analysis processed image:', processedErr);
+      } finally {
+        try {
+          if (fs.existsSync(analysisResults.processed_image_path)) {
+            fs.unlinkSync(analysisResults.processed_image_path);
+          }
+        } catch (unlinkErr) {
+          console.error('⚠️ Failed to delete re-analysis processed temp file:', unlinkErr);
+        }
+      }
+    }
+
     // Update scan with new insights
     scan.aiInsights = {
         ...analysisResults.aiInsights,
@@ -589,7 +1005,7 @@ router.post('/:id/analyze', protect, async (req, res) => {
         scan.productivityRecommendation = analysisResults.productivityRecommendation;
     }
 
-    // Update Trunk & Tappability data (Crucial for Trunks.pt integration)
+    // Update Trunk & Tappability data (Crucial for Trunks-v2.pt integration)
     if (analysisResults.trunkAnalysis) {
         scan.trunkAnalysis = analysisResults.trunkAnalysis;
     }
@@ -598,7 +1014,7 @@ router.post('/:id/analyze', protect, async (req, res) => {
     }
     if (analysisResults.treeIdentification) {
         // Merge carefully to avoid overwriting existing tree ID confidence if new one is lower, 
-        // but Trunks.pt is specialized so we trust it for 'detectedPart'
+        // but Trunks-v2.pt is specialized so we trust it for 'detectedPart'
         scan.treeIdentification = {
             ...scan.treeIdentification,
             ...analysisResults.treeIdentification
@@ -633,6 +1049,13 @@ router.post('/:id/analyze', protect, async (req, res) => {
     
     // Save changes
     await scan.save();
+    try {
+      await syncLegacyAnalysisModels(scan);
+    } catch (syncErr) {
+      console.error('Legacy analysis sync failed after re-analysis:', syncErr);
+    }
+    // Keep response shape consistent with GET endpoints so mobile/web can read tree.treeID
+    await scan.populate('tree', 'treeID location healthStatus');
 
     res.json({
         success: true,

@@ -32,13 +32,13 @@ except ImportError:
     def map_trunk_disease(name): return name, "unknown", "Mapping unavailable"
 
 # Path to the model
-model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Trunks.pt')
+model_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/Trunks-v2.pt')
 
 print(f"\n🔍 Checking for model at: {model_path}", flush=True)
 
 if not os.path.exists(model_path):
-    print("❌ Trunks.pt not found! Please place it in backend/ai_service/models/rubber_tree_model/weights/", flush=True)
-    # Attempt to use best.pt as fallback for testing logic if Trunks.pt is missing
+    print("❌ Trunks-v2.pt not found! Please place it in backend/ai_service/models/rubber_tree_model/weights/", flush=True)
+    # Attempt to use best.pt as fallback for testing logic if Trunks-v2.pt is missing
     fallback_path = os.path.join(os.path.dirname(__file__), 'models/rubber_tree_model/weights/best.pt')
     if os.path.exists(fallback_path):
         print(f"⚠️ Falling back to best.pt for testing logic: {fallback_path}", flush=True)

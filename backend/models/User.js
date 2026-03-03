@@ -54,6 +54,26 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  avatar: {
+    public_id: {
+      type: String,
+      default: null
+    },
+    url: {
+      type: String,
+      default: null
+    }
+  },
+  profilePicture: {
+    public_id: {
+      type: String,
+      default: null
+    },
+    url: {
+      type: String,
+      default: null
+    }
+  },
   followers: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -121,6 +141,10 @@ userSchema.virtual('followersCount').get(function() {
 
 userSchema.virtual('followingCount').get(function() {
   return Array.isArray(this.following) ? this.following.length : 0;
+});
+
+userSchema.virtual('resolvedProfileImage').get(function() {
+  return this.profileImage || this.avatar?.url || this.profilePicture?.url || null;
 });
 
 module.exports = mongoose.model('User', userSchema);

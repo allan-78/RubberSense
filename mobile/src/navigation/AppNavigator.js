@@ -26,6 +26,7 @@ import ProfileScreen from '../screens/ProfileScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
 import PrivacySecurityScreen from '../screens/PrivacySecurityScreen';
 import NotificationSettingsScreen from '../screens/NotificationSettingsScreen';
+import ContactUsScreen from '../screens/ContactUsScreen';
 import ChatScreen from '../screens/ChatScreen';
 import InboxScreen from '../screens/InboxScreen';
 import NotificationScreen from '../screens/NotificationScreen';
@@ -48,7 +49,7 @@ const MainTabs = () => {
       }}
       screenOptions={{
         headerShown: false,
-        tabBarHideOnKeyboard: true,
+        tabBarHideOnKeyboard: false,
       }}
     >
       <Tab.Screen 
@@ -130,6 +131,7 @@ const AppNavigator = () => {
               <Stack.Screen name="Market" component={MarketScreen} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen} />
               <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
+              <Stack.Screen name="ContactUs" component={ContactUsScreen} />
               <Stack.Screen name="PrivacySecurity" component={PrivacySecurityScreen} />
               <Stack.Screen name="Chatbot" component={ChatbotScreen} />
               <Stack.Screen name="ScanDetail" component={ScanDetailScreen} />

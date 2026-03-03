@@ -4,7 +4,13 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authAPI, userAPI, API_URL } from '../services/api';
+import {
+  authAPI,
+  userAPI,
+  API_URL,
+  normalizeUserEntity,
+  resolveUserProfileImage,
+} from '../services/api';
 import { disconnectSocket } from '../services/socket';
 
 const AuthContext = createContext(null);
@@ -54,6 +60,45 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const extractUserPayload = (payload) => {
+    const userData =
+      payload?.user ||
+      payload?.data?.user ||
+      payload?.data?.data?.user ||
+      payload?.data ||
+      null;
+
+    if (!userData || typeof userData !== 'object') return null;
+
+    return normalizeUserEntity({ ...userData });
+  };
+
+  const extractTokenPayload = (payload) => {
+    return payload?.token || payload?.data?.token || payload?.data?.data?.token || null;
+  };
+
+  const hydrateUserFromProfile = async (baseUser) => {
+    const normalizedBase = normalizeUserEntity({ ...(baseUser || {}) });
+    const userId = normalizedBase?._id || normalizedBase?.id || normalizedBase?.userId;
+    if (!userId) return normalizedBase;
+
+    try {
+      const profileRes = await userAPI.getProfile(userId);
+      const profileData = profileRes?.data || profileRes;
+      if (profileData && typeof profileData === 'object') {
+        return normalizeUserEntity({
+          ...normalizedBase,
+          ...profileData,
+          _id: profileData?._id || normalizedBase?._id || normalizedBase?.id || normalizedBase?.userId,
+        });
+      }
+    } catch (error) {
+      console.log('Hydrate user profile fallback error:', error);
+    }
+
+    return normalizedBase;
+  };
+
   // Refresh user data from backend
   const refreshUser = async () => {
     try {
@@ -61,12 +106,13 @@ export const AuthProvider = ({ children }) => {
       if (!token) return null;
 
       const response = await authAPI.getMe();
-      const userData = response?.data?.user;
+      const userData = extractUserPayload(response);
       
       if (userData) {
-        await AsyncStorage.setItem('user', JSON.stringify(userData));
-        setUser(userData);
-        return userData;
+        const hydratedUser = await hydrateUserFromProfile(userData);
+        await AsyncStorage.setItem('user', JSON.stringify(hydratedUser));
+        setUser(hydratedUser);
+        return hydratedUser;
       }
       return null;
     } catch (error) {
@@ -79,17 +125,22 @@ export const AuthProvider = ({ children }) => {
     setUser(prev => {
       if (!prev) return prev;
       const existing = Array.isArray(prev.following) ? prev.following : [];
+      const targetUserId = targetUser?._id || targetUser?.id || targetUser?.userId;
       let updatedFollowing;
       if (isNowFollowing) {
-        const exists = existing.some(u => String((u && u._id) || u) === String(targetUser._id));
+        const exists = existing.some(u => String((u && (u._id || u.id || u.userId)) || u) === String(targetUserId));
         if (!exists) {
-          const minimal = { _id: targetUser._id, name: targetUser.name, profileImage: targetUser.profileImage };
+          const minimal = {
+            _id: targetUserId,
+            name: targetUser?.name,
+            profileImage: resolveUserProfileImage(targetUser),
+          };
           updatedFollowing = [...existing, minimal];
         } else {
           updatedFollowing = existing;
         }
       } else {
-        updatedFollowing = existing.filter(u => String((u && u._id) || u) !== String(targetUser._id));
+        updatedFollowing = existing.filter(u => String((u && (u._id || u.id || u.userId)) || u) !== String(targetUserId));
       }
       const updated = {
         ...prev,
@@ -111,15 +162,20 @@ export const AuthProvider = ({ children }) => {
       if (token) {
         try {
           const res = await authAPI.refresh();
-          const { token: newToken, user: refreshedUser } = res.data || res;
+          const newToken = extractTokenPayload(res);
+          const refreshedUser = extractUserPayload(res);
           if (newToken) {
             await AsyncStorage.setItem('token', newToken);
           }
           if (refreshedUser) {
-            await AsyncStorage.setItem('user', JSON.stringify(refreshedUser));
-            setUser(refreshedUser);
+            const hydratedUser = await hydrateUserFromProfile(refreshedUser);
+            await AsyncStorage.setItem('user', JSON.stringify(hydratedUser));
+            setUser(hydratedUser);
           } else if (userData) {
-            setUser(JSON.parse(userData));
+            const parsedUser = JSON.parse(userData);
+            const normalizedUser = normalizeUserEntity({ ...(parsedUser || {}) });
+            setUser(normalizedUser);
+            await AsyncStorage.setItem('user', JSON.stringify(normalizedUser));
           }
         } catch (e) {
           await AsyncStorage.removeItem('token');
@@ -128,7 +184,10 @@ export const AuthProvider = ({ children }) => {
           setUser(null);
         }
       } else if (userData) {
-        setUser(JSON.parse(userData));
+        const parsedUser = JSON.parse(userData);
+        const normalizedUser = normalizeUserEntity({ ...(parsedUser || {}) });
+        setUser(normalizedUser);
+        await AsyncStorage.setItem('user', JSON.stringify(normalizedUser));
       }
     } catch (error) {
       console.log('Auth check error:', error);
@@ -142,17 +201,18 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authAPI.login({ email, password });
       
-      // Fix: response is already response.data from interceptor
-      const { user: userData, token } = response.data || response;
+      const token = extractTokenPayload(response);
+      const userData = extractUserPayload(response);
       
-      if (token) {
+      if (token && userData) {
         // Only save token for API calls in current session
-        await AsyncStorage.setItem('token', token);
-        await AsyncStorage.setItem('user', JSON.stringify(userData));
-        setUser(userData);
+        await AsyncStorage.setItem('token', token); 
+        const hydratedUser = await hydrateUserFromProfile(userData);
+        await AsyncStorage.setItem('user', JSON.stringify(hydratedUser));
+        setUser(hydratedUser);
         return { success: true };
       } else {
-         return { success: false, error: 'No token received' };
+         return { success: false, error: 'No token or user received' };
       }
     } catch (error) {
       console.log('Login error:', error);
@@ -180,8 +240,8 @@ export const AuthProvider = ({ children }) => {
 
       console.log('✅ [AuthContext] Registration API response received');
 
-      // Fix: accessing response.data directly as response is already the response body (due to interceptor)
-      const { user: userData, token } = response.data || response;
+      const token = extractTokenPayload(response);
+      const userData = extractUserPayload(response);
       
       // Auto-login after registration
       if (token && userData) {
@@ -189,12 +249,15 @@ export const AuthProvider = ({ children }) => {
         // Do NOT save to AsyncStorage for persistent login
         // await AsyncStorage.setItem('token', token);
         // await AsyncStorage.setItem('user', JSON.stringify(userData));
-        setUser(userData);
+        // Hydrate from /api/v1/users/:id so avatar/profilePicture-only accounts sync on mobile.
         // We still need to save the token in memory/state for API calls to work in this session
         // But since we removed AsyncStorage, we need a way to pass the token to API service
         // For now, let's keep AsyncStorage for token (needed for API interceptor) but clear it on app close/start
         // OR better: Just don't restore it in checkAuth
         await AsyncStorage.setItem('token', token); 
+        const hydratedUser = await hydrateUserFromProfile(userData);
+        await AsyncStorage.setItem('user', JSON.stringify(hydratedUser));
+        setUser(hydratedUser);
       }
 
       return { 
@@ -265,19 +328,17 @@ export const AuthProvider = ({ children }) => {
   const updateProfile = async (formData) => {
     try {
       const response = await userAPI.updateProfile(formData);
-      // API returns { success: true, data: user, message: '...' }
-      // Our api interceptor returns response.data directly.
-      // Wait, api interceptor returns response.data.
-      // If backend sends res.json({ success: true, ... }), then response (which is response.data) is { success: true, ... }
-      // So response.data is the user object.
       
-      if (response.success && response.data) {
-        const updatedUser = response.data;
-        await AsyncStorage.setItem('user', JSON.stringify(updatedUser));
-        setUser(updatedUser);
-        return { success: true, user: updatedUser };
+      // Handle both v1 and standard response formats
+      const updatedUser = response?.user || response?.data || extractUserPayload(response);
+
+      if (response?.success && updatedUser) {
+        const hydratedUser = await hydrateUserFromProfile(updatedUser);
+        await AsyncStorage.setItem('user', JSON.stringify(hydratedUser));
+        setUser(hydratedUser);
+        return { success: true, user: hydratedUser };
       }
-      return { success: false, error: response.error || 'Update failed' };
+      return { success: false, error: response?.error || 'Update failed' };
     } catch (error) {
       console.log('Update profile error:', error);
       return { 

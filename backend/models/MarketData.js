@@ -5,6 +5,29 @@ const MarketDataSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // Original quote timestamp from provider (can differ from record creation time).
+  sourceTimestamp: {
+    type: Date,
+  },
+  source: {
+    type: String,
+    default: 'stooq',
+  },
+  sourceSymbol: {
+    type: String,
+  },
+  sourcePrice: {
+    type: Number,
+  },
+  sourceCurrency: {
+    type: String,
+  },
+  sourceUnit: {
+    type: String,
+  },
+  fxRate: {
+    type: Number,
+  },
   price: {
     type: Number,
     required: true,

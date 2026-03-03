@@ -19,6 +19,30 @@ const generateToken = (id) => {
   });
 };
 
+const resolveProfileImage = (user = {}) => {
+  return user.profileImage || user.avatar?.url || user.profilePicture?.url || null;
+};
+
+const mapRelatedUser = (user = null) => {
+  if (!user) return null;
+
+  const image = resolveProfileImage(user);
+  return {
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    profileImage: image,
+    avatar: {
+      public_id: user.avatar?.public_id || user.profilePicture?.public_id || '',
+      url: image || ''
+    },
+    profilePicture: {
+      public_id: user.profilePicture?.public_id || user.avatar?.public_id || '',
+      url: image || ''
+    }
+  };
+};
+
 // @route   POST /api/auth/register
 // @desc    Register user
 // @access  Public
@@ -94,7 +118,9 @@ router.post('/register', async (req, res) => {
           phoneNumber: user.phoneNumber,
           location: user.location,
           isVerified: user.isVerified,
-          profileImage: user.profileImage,
+          profileImage: resolveProfileImage(user),
+          avatar: user.avatar,
+          profilePicture: user.profilePicture,
           followers: user.followers,
           following: user.following,
           blockedUsers: user.blockedUsers,
@@ -197,7 +223,9 @@ router.post('/login', async (req, res) => {
           phoneNumber: user.phoneNumber,
           location: user.location,
           isVerified: user.isVerified,
-          profileImage: user.profileImage,
+          profileImage: resolveProfileImage(user),
+          avatar: user.avatar,
+          profilePicture: user.profilePicture,
           followers: user.followers,
           following: user.following,
           blockedUsers: user.blockedUsers,
@@ -340,8 +368,8 @@ router.post('/resend-verification', async (req, res) => {
 router.get('/me', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
-      .populate('followers', 'name profileImage')
-      .populate('following', 'name profileImage');
+      .populate('followers', 'name email profileImage avatar profilePicture')
+      .populate('following', 'name email profileImage avatar profilePicture');
 
     if (!user) {
       return res.status(404).json({
@@ -361,9 +389,11 @@ router.get('/me', protect, async (req, res) => {
           phoneNumber: user.phoneNumber,
           location: user.location,
           isVerified: user.isVerified,
-          profileImage: user.profileImage,
-          followers: user.followers,
-          following: user.following,
+          profileImage: resolveProfileImage(user),
+          avatar: user.avatar,
+          profilePicture: user.profilePicture,
+          followers: (user.followers || []).map(mapRelatedUser),
+          following: (user.following || []).map(mapRelatedUser),
           blockedUsers: user.blockedUsers,
           isActive: user.isActive,
           followersCount: Array.isArray(user.followers) ? user.followers.length : 0,
@@ -392,8 +422,8 @@ router.get('/me', protect, async (req, res) => {
 router.post('/refresh', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
-      .populate('followers', 'name profileImage')
-      .populate('following', 'name profileImage');
+      .populate('followers', 'name email profileImage avatar profilePicture')
+      .populate('following', 'name email profileImage avatar profilePicture');
     
     if (!user) {
       return res.status(404).json({
@@ -416,9 +446,11 @@ router.post('/refresh', protect, async (req, res) => {
           phoneNumber: user.phoneNumber,
           location: user.location,
           isVerified: user.isVerified,
-          profileImage: user.profileImage,
-          followers: user.followers,
-          following: user.following,
+          profileImage: resolveProfileImage(user),
+          avatar: user.avatar,
+          profilePicture: user.profilePicture,
+          followers: (user.followers || []).map(mapRelatedUser),
+          following: (user.following || []).map(mapRelatedUser),
           blockedUsers: user.blockedUsers,
           isActive: user.isActive,
           followersCount: Array.isArray(user.followers) ? user.followers.length : 0,

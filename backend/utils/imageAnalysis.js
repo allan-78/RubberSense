@@ -213,7 +213,7 @@ const generateAiInsights = (data, mode) => {
         }
      }
   } else if (mode === 'latex') {
-      // Merge Python-side AI insights if available
+      // Latex suggestions/prompts must come from Groq-backed Python output only.
       if (data.aiInsights) {
            if (data.aiInsights.promptRecommendations) {
                prompts.push(...data.aiInsights.promptRecommendations);
@@ -222,27 +222,17 @@ const generateAiInsights = (data, mode) => {
                suggestions.push(...data.aiInsights.suggestions);
            }
       }
-
-      if (data.latexQualityPrediction) {
-          prompts.push(`Improve latex quality from ${data.latexQualityPrediction.quality}`);
-          // Avoid duplicates
-          if (!prompts.includes("Current rubber market prices")) {
-               prompts.push("Current rubber market prices");
-          }
-      }
-      if (data.contaminationDetection && data.contaminationDetection.hasContamination) {
-          prompts.push("How to remove contamination from latex");
-          suggestions.push("Filter latex before processing to remove contaminants.");
-      }
   }
 
   // Deduplicate prompts and suggestions
   const uniquePrompts = [...new Set(prompts)];
   const uniqueSuggestions = [...new Set(suggestions)];
 
-  // Fallbacks
-  if (uniquePrompts.length === 0) uniquePrompts.push("Rubber farming tips");
-  if (uniqueSuggestions.length === 0) uniqueSuggestions.push("Regularly check for pests and diseases.");
+  // Fallbacks (tree only). For latex, keep empty when Groq does not return content.
+  if (mode !== 'latex') {
+    if (uniquePrompts.length === 0) uniquePrompts.push("Rubber farming tips");
+    if (uniqueSuggestions.length === 0) uniqueSuggestions.push("Regularly check for pests and diseases.");
+  }
 
   return {
       promptRecommendations: uniquePrompts.slice(0, 5), // Increased limit slightly
